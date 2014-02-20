@@ -1,0 +1,1199 @@
+#if 0
+#include "constants.h"
+#include "netClockSync.h"
+//#include "videoplayback.h"
+
+static bool broadcastAudio = false;
+static bool broadcastPTS = false;
+
+#ifdef NETWORKED_AUDIO
+int _clientSenderID = -1;
+int _udpAudioServerPort = 2008;
+char* _udpAudioServerIP = "127.0.0.1";
+char* _tcpAudioServerIP = "127.0.0.1"; // default TCP server IP
+int _tcpAudioServerPort = 2007; // default port
+
+double netAudioClock[MAXSTREAMS];// = 0;
+double avgNetLatency = 0;
+double g_UDPDelay = 0.0;
+
+enum {astop, aplay, invalid};
+enum {ffs = 1, ffmpeg}; // 1 = ffs, 2 = ffmpeg
+
+#define UDP_BUFFER_SIZE 256
+char msg[UDP_BUFFER_SIZE];
+
+extern void seekVideo(int side, double seekDuration, double seekBaseTime = -1, bool sendSeekTCPCommand = true);
+#endif
+
+#endif
+//#ifdef NETWORKED_AUDIO
+extern int _clientSenderID;
+extern int _udpAudioServerPort;
+extern char* _udpAudioServerIP;
+extern char* _tcpAudioServerIP; // default TCP server IP
+extern int _tcpAudioServerPort; // default port
+//#endif
+
+
+#if defined( __WIN32__ ) || defined( _WIN32 )
+	#define TARGET_WIN32
+#elif defined( __APPLE_CC__)
+	#include <TargetConditionals.h>
+
+	#if (TARGET_OF_IPHONE_SIMULATOR) || (TARGET_OS_IPHONE) || (TARGET_IPHONE)
+		#define TARGET_OF_IPHONEz
+		#define TARGET_OPENGLES
+	#else
+		#define TARGET_OSX
+	#endif
+#else
+	#define TARGET_LINUX
+#endif
+
+//static bool broadcastAudio = false;
+//static bool broadcastPTS = false;
+#include "constants.h"
+#include <string>
+
+//#define WIN32_LEAN_AND_MEAN
+
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+// Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
+#pragma comment (lib, "Ws2_32.lib")
+#pragma comment (lib, "Mswsock.lib")
+#pragma comment (lib, "AdvApi32.lib")
+
+#define DEFAULT_BUFLEN 256
+
+/************************************ INIT *************************************/
+#define READY_TIMEOUT 2500
+
+bool verbose = false;
+bool init = false;
+
+WSADATA wsaData;
+SOCKET ConnectSocket = INVALID_SOCKET;
+SOCKET ConnectSocketUDP = INVALID_SOCKET;
+
+bool closeWinSock()
+{
+	if(init)
+	{
+		if (ConnectSocket != INVALID_SOCKET)
+		{
+			#ifdef TARGET_WIN32
+				if(closesocket(ConnectSocket) == SOCKET_ERROR)
+			#else
+				if(close(ConnectSocket) == SOCKET_ERROR)
+			#endif
+			{
+				return(false);
+			}
+		}
+		if(WSACleanup() != SOCKET_ERROR)
+		{
+			init = false;
+			return true;
+		}
+	}
+
+	return false;
+}
+bool initWinSock()
+{
+    int iResult;
+
+    // Initialize Winsock
+    iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
+    if (iResult != 0) {
+        printf("WSAStartup failed with error: %d\n", iResult);
+        return false;
+    }
+	init = true;
+
+	return true;
+}
+
+bool Create()
+{
+    struct addrinfo *result = NULL, *ptr = NULL, hints;
+
+    ZeroMemory( &hints, sizeof(hints) );
+    //hints.ai_family = AF_UNSPEC;
+	hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    // Attempt to connect to an address until one succeeds
+    for(ptr=result; ptr != NULL ;ptr=ptr->ai_next) {
+
+        // Create a SOCKET for connecting to server
+        ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
+        if (ConnectSocket == INVALID_SOCKET) {
+            printf("socket failed with error: %ld\n", WSAGetLastError());
+            //WSACleanup();
+            return false;
+        }
+	}
+
+	return true;
+}
+
+bool Connect(std::string ip, int _port, bool blocking)
+{
+    struct addrinfo *result = NULL,
+                    *ptr = NULL,
+                    hints;
+
+    int iResult;
+
+    ZeroMemory( &hints, sizeof(hints) );
+    //hints.ai_family = AF_UNSPEC;
+	hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+	iResult = connect( ConnectSocket, ptr->ai_addr, (int)ptr->ai_addrlen);
+	if (iResult == SOCKET_ERROR) {
+		//closesocket(ConnectSocket);
+		ConnectSocket = INVALID_SOCKET;
+		return false;
+	}
+}
+
+bool Setup(std::string ip, int _port, bool blocking)
+{
+	if(Create())
+		return Connect(ip, _port, blocking);
+
+	return false;
+}
+
+int initTCPClient()
+{
+    struct addrinfo *result = NULL,
+                    *ptr = NULL,
+                    hints;
+
+    int iResult;
+
+    ZeroMemory( &hints, sizeof(hints) );
+    //hints.ai_family = AF_UNSPEC;
+	hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+	char portStr[5];
+	sprintf(portStr, "%d", _tcpAudioServerPort);
+
+    // Resolve the server address and port
+    iResult = getaddrinfo(_tcpAudioServerIP, portStr, &hints, &result);
+    if ( iResult != 0 ) {
+        printf("getaddrinfo failed with error: %d\n", iResult);
+        WSACleanup();
+        return 1;
+    }
+
+    // Attempt to connect to an address until one succeeds
+    for(ptr=result; ptr != NULL ;ptr=ptr->ai_next) {
+
+        // Create a SOCKET for connecting to server
+        ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
+        if (ConnectSocket == INVALID_SOCKET) {
+            printf("socket failed with error: %ld\n", WSAGetLastError());
+            //WSACleanup();
+            return 1;
+        }
+
+        // Connect to server.
+        iResult = connect( ConnectSocket, ptr->ai_addr, (int)ptr->ai_addrlen);
+        if (iResult == SOCKET_ERROR) {
+            //closesocket(ConnectSocket);
+            ConnectSocket = INVALID_SOCKET;
+            //continue;
+			return 2;
+        }
+        break;
+    }
+
+    freeaddrinfo(result);
+
+    if (ConnectSocket == INVALID_SOCKET) {
+        printf("Unable to connect to server!\n");
+        //WSACleanup();
+        return 1;
+    }
+
+	//// Set non-blocking
+	//unsigned long l = 1;
+	//DWORD Returned = 0;
+	//if ( SOCKET_ERROR == WSAIoctl ( ConnectSocket, FIONBIO, (LPVOID)&l, sizeof(l), NULL, 0, &Returned, NULL, NULL ) )
+	//{
+	//	printf("Failed to set non-blocking mode, error %d\n", WSAGetLastError() );
+	//}
+
+	return 0;
+}
+
+int initUDPClient()
+{
+    struct addrinfo *result = NULL,
+                    *ptr = NULL,
+                    hints;
+    
+    int iResult;
+
+    ZeroMemory( &hints, sizeof(hints) );
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_protocol = 0;
+
+	char portStr[5];
+	sprintf(portStr, "%d", _udpAudioServerPort);
+
+    // Resolve the server address and port
+	iResult = getaddrinfo(_udpAudioServerIP, portStr, &hints, &result);
+    if ( iResult != 0 ) {
+        printf("getaddrinfo failed with error: %d\n", iResult);
+        WSACleanup();
+        return 1;
+    }
+
+    // Attempt to connect to an address until one succeeds
+    for(ptr=result; ptr != NULL ;ptr=ptr->ai_next) {
+
+        // Create a SOCKET for connecting to server
+        ConnectSocketUDP = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
+        if (ConnectSocketUDP == INVALID_SOCKET) {
+            printf("socket failed with error: %ld\n", WSAGetLastError());
+            WSACleanup();
+            return 1;
+        }
+
+        // Connect to server.
+        iResult = connect( ConnectSocketUDP, ptr->ai_addr, (int)ptr->ai_addrlen);
+        if (iResult == SOCKET_ERROR) {
+            closesocket(ConnectSocketUDP);
+            ConnectSocket = INVALID_SOCKET;
+            continue;
+        }
+		printf("Connected!\n");
+        break;
+    }
+
+    freeaddrinfo(result);
+
+    if (ConnectSocketUDP == INVALID_SOCKET) {
+        printf("Unable to connect to server!\n");
+        WSACleanup();
+        return 1;
+    }
+
+	//// Set non-blocking
+	//unsigned long l = 1;
+	//DWORD Returned = 0;
+	//if ( SOCKET_ERROR == WSAIoctl ( ConnectSocketUDP, FIONBIO, (LPVOID)&l, sizeof(l), NULL, 0, &Returned, NULL, NULL ) )
+	//{
+	//	printf("Failed to set non-blocking mode, error %d\n", WSAGetLastError() );
+	//}
+	//WSAEWOULDBLOCK
+
+	return 0;
+}
+
+/************************************* TCP *************************************/
+
+int sendTCPData(const char* msg)
+{
+	int iResult;
+	//char sendbuf[DEFAULT_BUFLEN];
+	//sendbuf = "CLIENTID;4;";
+	//memset(sendbuf, 0, DEFAULT_BUFLEN);
+	//sendbuf[0] = STR_END_MSG;
+	//strcpy(sendbuf, "CLIENTID;4;");
+	char *sendbuf = (char*)msg;//"this is a test";
+	//sendbuf[12] = (char)"";//(char)0; //for flash
+	    // Send an initial buffer
+    iResult = send( ConnectSocket, sendbuf, DEFAULT_BUFLEN, 0 );
+    if (iResult == SOCKET_ERROR) {
+        printf("send failed with error: %d\n", WSAGetLastError());
+        closesocket(ConnectSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    printf("Bytes Sent:%ld\n", iResult);
+	printf("Bytes Sent:%s\n", sendbuf);
+
+    //// shutdown the connection since no more data will be sent
+    //iResult = shutdown(ConnectSocket, SD_SEND);
+    //if (iResult == SOCKET_ERROR) {
+    //    printf("shutdown failed with error: %d\n", WSAGetLastError());
+    //    closesocket(ConnectSocket);
+    //    WSACleanup();
+    //    return 1;
+    //}
+
+	return 0;
+}
+
+int getTCPData(char* msg)
+{
+#if 1
+    char recvbuf[DEFAULT_BUFLEN];
+    int iResult = -1;
+    int recvbuflen = DEFAULT_BUFLEN;
+
+    // Receive until the peer closes the connection
+    //do {
+
+	int total = 0;
+	bool found = false;
+	//while(!found)
+	//{
+
+        iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
+        if ( iResult > 0 )
+		{
+            //printf("Bytes received: %d\n", iResult);
+			//recvbuf[iResult] = '\0';
+			//sprintf(msg, "%s", recvbuf);
+			memcpy(msg, recvbuf, DEFAULT_BUFLEN);
+			//msg = "Hello";//recvbuf;
+
+			//total += iResult;
+			//found = (strchr(recvbuf, '\n') != 0);
+
+			//if( stricmp(recvbuf, "READY;") == 0 )
+			//	break;
+		}
+        else if ( iResult == 0 )
+            printf("Connection closed\n");
+        else
+		{
+			// Check for disconnect.
+			int err = WSAGetLastError();   // This gets err code from recv() call inside recvRawBytes.
+			if ((iResult == 0) || ((iResult < 0) && (err != WSAEWOULDBLOCK) && (err != WSAETIMEDOUT))) 
+			{
+				//if (verbose)
+					//printf("ofxTCPCient: Client on %s disconnected\n", ipAddr.c_str());
+					printf("recv failed with error: %d\n", err);
+			}
+            //printf("recv failed with error: %d\n", WSAGetLastError());
+		}
+
+	//}
+    //} while( iResult > 0 );
+#endif
+#if 0
+char inbuf[DEFAULT_BUFLEN];
+size_t inbuf_used = 0;
+
+/* Final \n is replaced with \0 before calling process_line */
+void process_line(char *lineptr);
+
+void input_pump(int fd) {
+  size_t buf_remain = sizeof(inbuf) - inbuf_used;
+  if (buf_remain == 0) {
+    fprintf(stderr, "Line exceeded buffer length!\n");
+    abort();
+  }
+
+  ssize_t rv = recv(fd, (void*)&inbuf[inbuf_used], buf_remain, MSG_DONTWAIT);
+  if (rv == 0) {
+    fprintf(stderr, "Connection closed.\n");
+    abort();
+  }
+  if (rv < 0 && errno == EAGAIN) {
+    /* no data for now, call back when the socket is readable */
+    return;
+  }
+  if (rv < 0) {
+    perror("Connection error");
+    abort();
+  }
+  buf_used += rv;
+
+  /* Scan for newlines in the line buffer; we're careful here to deal with embedded \0s
+   * an evil server may send, as well as only processing lines that are complete.
+   */
+  char *line_start = inbuf;
+  char *line_end;
+  while ( (line_end = (char*)memchr((void*)line_start, '\n', buf_used - (line_start - inbuf))))
+  {
+    *line_end = 0;
+    process_line(line_start);
+    line_start = line_end + 1;
+  }
+  /* Shift buffer down so the unprocessed data is at the start */
+  buf_used -= (inbuf - line_start);
+  memmove(innbuf, line_start, buf_used);
+}
+#endif
+
+
+	return iResult;
+}
+
+
+
+/************************************* UDP *************************************/
+
+int sendUDPData(const char* msg)
+{
+	int iResult;
+	//memset(sendbuf, 0, DEFAULT_BUFLEN);
+	char *sendbuf = (char*)msg;//"this is a test";
+	//sendbuf[12] = (char)"";//(char)0; //for flash
+	// Send an initial buffer
+		//(int)strlen(sendbuf)
+    iResult = send( ConnectSocketUDP, sendbuf, DEFAULT_BUFLEN, 0 );
+    if (iResult == SOCKET_ERROR) {
+        printf("send failed with error: %d\n", WSAGetLastError());
+        closesocket(ConnectSocketUDP);
+        WSACleanup();
+        return 1;
+    }
+
+    printf("Bytes Sent:%ld\n", iResult);
+	printf("Bytes Sent:%s\n", sendbuf);
+
+    //// shutdown the connection since no more data will be sent
+    //iResult = shutdown(ConnectSocketUDP, SD_SEND);
+    //if (iResult == SOCKET_ERROR) {
+    //    printf("shutdown failed with error: %d\n", WSAGetLastError());
+    //    closesocket(ConnectSocketUDP);
+    //    WSACleanup();
+    //    return 1;
+    //}
+
+	return 0;
+}
+
+int getUDPData(char* msg)
+{
+    char recvbuf[DEFAULT_BUFLEN];
+    int iResult = -1;
+    int recvbuflen = DEFAULT_BUFLEN;
+
+    // Receive until the peer closes the connection
+    //do {
+
+        iResult = recv(ConnectSocketUDP, recvbuf, recvbuflen, 0);
+        if ( iResult > 0 )
+		{
+            printf("Bytes received: %d\n", iResult);
+			recvbuf[iResult] = '\0';
+			sprintf(msg, "%s", recvbuf);
+			//msg = "Hello";//recvbuf;
+
+			//if( stricmp(recvbuf, "READY;") == 0 )
+			//	break;
+		}
+        else if ( iResult == 0 )
+            printf("Connection closed\n");
+        else
+            printf("recv failed with error: %d\n", WSAGetLastError());
+
+    //} while( iResult > 0 );
+
+	return iResult;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////// Timer  ///////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+/* Basic timer
+ */
+extern void startNetTimer();
+extern double getNetTimer();
+
+#if 0
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////// Setup  ///////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+/* Test the network latency.
+ */
+double testNetworkLatency()
+{
+	printf("Testing network latency...please wait.\n");
+	//udpConnection->SetNonBlocking(false);
+	//udpConnection->SetTimeoutReceive(VIDEO_UDP_TIMEOUT);
+	#define TOTAL	100
+	double latencyTimes[TOTAL];
+	for (int i = 0; i < TOTAL; i++)
+	{
+		double netClock;
+		double sent_date = -1;
+		startGlobalVideoTimer(currentVideo);
+		//sendGetAudioClockCommand(0);
+		sendGetAudioClockCommand(currentVideo, sent_date);
+		do {
+			netClock = parseUDPCommands(0, &sent_date);
+		}
+		while(netClock < 0);
+		latencyTimes[i] = getGlobalVideoTimer(currentVideo);
+	}
+
+	double avg = 0;
+	for (int i = 0; i < TOTAL; i++)
+		avg += latencyTimes[i]/2.0f;
+
+	//udpConnection->SetTimeoutReceive(0);
+	//udpConnection->SetNonBlocking(true);
+
+	return (avg)/TOTAL;
+}
+
+/* Initialise the network sync.
+ */
+void initNetSync(char *serverIP, int TCPPort, int UDPPort, int ClientID, int side, bool testLatency)
+{
+	char *audioServerIP = serverIP;
+	int audioServerTCPPort = TCPPort;
+	int audioServerUDPPort = UDPPort;
+	_clientSenderID = ClientID;
+	_udpAudioServerIP = audioServerIP;
+	_udpAudioServerPort = audioServerUDPPort;
+	_tcpAudioServerIP = audioServerIP;
+	_tcpAudioServerPort = audioServerTCPPort;
+
+	printf("Setting up ClientID: %d, TCP Server IP: %s, UDP Server IP: %s, TCP port: %d UDP Port: %d\n", _clientSenderID, _tcpAudioServerIP, _udpAudioServerIP, audioServerTCPPort, audioServerUDPPort);
+	printf("\n");
+
+	if(!audioClientSetup()) {
+		exit(-1);
+	}
+	if(testLatency)
+	{
+		avgNetLatency = testNetworkLatency();
+		printf("Average UDP network latency (milliseconds): %f\n", avgNetLatency);
+	}
+
+	_beginthread(syncThread, 0, 0);
+}
+
+bool audioClientSetup()
+{
+	if(!connectToAudioServer())
+	{
+		printf("ERROR: Couldn't connected to audio server\n");
+		return false;
+	}
+
+	return true;
+}
+
+
+
+#endif
+/*********************************** SETUP *************************************/
+int connectToAudioServer()
+{
+	initWinSock();
+	printf("Setting up TCP server!\n");
+	//if(initTCPClient())
+	//{
+	//	printf("Could not connected to TCP Server!\n");
+	//	return false;
+	//}
+
+	// Setup TCP client to listen to incoming commands from the touch server
+	while(initTCPClient() == 2)
+	{
+		printf("Waiting to connect to audio server...\n");
+		Sleep(100);
+	}
+
+	printf("Initial TCP connection made.\nWaiting for a response from the server.\n");
+	bool readyRev = false;
+	double timeout = 0.0;
+	startNetTimer();
+
+	int recieved;
+	char message[DEFAULT_BUFLEN];
+	do
+	{
+		recieved = getTCPData(message);
+		timeout = getNetTimer();
+
+		std::string commands;
+		commands.assign(message, DEFAULT_BUFLEN);
+
+		if(recieved > 1)
+		{
+			int found = 0, start = 0;
+
+			start = commands.find_first_of('\0');
+			start += 1;
+
+			while(start < DEFAULT_BUFLEN)
+			{
+				found = commands.find_first_of(" ,;", start);
+				std::string command = commands.substr (start,found-start);
+				start = found+1;
+
+				//if(stricmp(message, "READY") == 0)
+				if(command.compare("READY") == 0)
+				{
+					readyRev = true;
+					break;
+				}	
+			}
+
+		}
+		if(recieved < 1)
+			Sleep(10);
+
+		//if(timeout > READY_TIMEOUT)
+		//{
+		//	printf("Timeout waiting for READY...\n");
+		//	return false;
+		//}
+
+		printf("recieved %d - TCPMSG:%s:END - compare: %s\n", recieved, message, stricmp(message, "READY;") == 0 ? "true" : "false");
+	} while(!(recieved > 1 && stricmp(message, "READY;") == 0)/*  && (timeout < READY_TIMEOUT)*/);
+	printf("READY recieved.\n");
+
+	{
+		char buf[512];
+		sprintf(buf, "%d;", _clientSenderID);
+		std::string videoInfo = "CLIENTID;";
+		videoInfo.append(buf);
+		//videoInfo += STR_END_MSG;
+		//commandReceiver->send(videoInfo);
+		sendTCPData(videoInfo.c_str());
+	}
+
+	printf("Connected to TCP server!\n");
+
+	//connectToUDPServer();
+
+	return true;
+}
+
+///////////////////////////////// Network //////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////// UDP ///////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+#if 0
+/* Setup a new blocking UDP connection.
+ */
+int connectToUDPServer()
+{
+	char message[DEFAULT_BUFLEN];
+	if(initUDPClient())
+	{
+		printf("Could not connected to UDP Server!\n");
+		return false;
+	}
+
+	//sprintf(message, "%s", "GET_AUDIO_CLOCK;1;0;0.0;");
+	//printf("Sending  %s\n", message );
+	//send( ConnectSocketUDP, (const char *)message, sizeof(message), 0 );
+	//do
+	//{
+	//	sprintf(message, "%s", "GET_AUDIO_CLOCK;1;0;0.0;");
+	//	int ret = sendUDPData(message);
+	//	ret = getUDPData(message);
+	//	if(ret > 0)
+	//		printf("UDPMSG:%s:END\n", message);
+	//} while(!(stricmp(message, "READY;") == 0));
+
+	return 0;
+}
+/* Check incoming UDP commands and return audio clock time for the requested stream (blocking).
+ */
+double parseUDPCommands(int lside, double *snt_date)
+{
+	return parseUDPCommands(lside, snt_date, 0x0);
+}
+
+double parseUDPCommands(int lside, double *snt_date, uint64_t *master_time)
+{
+	sprintf(msg, "");
+	int bufsize = udpConnection->GetReceiveBufferSize();
+	int received = udpConnection->Receive(msg, bufsize);
+	string message=msg;
+
+	//string message;
+	//string tempMessage;
+	//bool getNext = true;
+	//while (getNext)
+	//{
+	//	sprintf(msg, "");
+	//	udpConnection->SetNonBlocking(false);udpConnection->SetTimeoutReceive(2);
+	//	int bufsize = udpConnection->GetReceiveBufferSize();
+	//	int received = udpConnection->Receive(msg, bufsize);
+	//   tempMessage=msg;
+
+	//  if (tempMessage == "")
+	//	{
+	//      getNext = false;
+	//		udpConnection->SetNonBlocking(false);udpConnection->SetTimeoutReceive(2);
+	//		printf("UDP buffer finished:-------------\n");
+	//	}
+	//	else
+	//	{
+	//        message = tempMessage;
+	//		printf("UDP buffer: %s\n", message.c_str());
+	//	}
+ //	}
+
+	if(message != "")
+	{
+		std::string videoInfo = std::string(message);
+		//printf("videoInfo: %s\n", videoInfo.c_str());
+
+		int found = 0, start = 0;
+		found = videoInfo.find_first_of(" ,;");
+		std::string command = videoInfo.substr(start,found-start).c_str();
+		if(command.compare("DELAY") == 0)
+		{
+			start = found+1;
+			found = videoInfo.find_first_of(" ,;", found+1);
+			int clientID = atoi((videoInfo.substr(start,found-start)).c_str());
+			
+			start = found+1;
+			found = videoInfo.find_first_of(" ,;",found+1);
+			int side = atoi(videoInfo.substr(start,found).c_str());
+
+			if(clientID == _clientSenderID && lside == side)
+			{
+				//printf("videoInfo: %s\n", videoInfo.c_str());
+
+				start = found+1;
+				found = videoInfo.find_first_of(" ,;",found+1);
+				double delay = atof(videoInfo.substr(start,found).c_str());
+				start = found+1;
+				found = videoInfo.find_first_of(" ,;",found+1);
+				double sent_date = atof(videoInfo.substr(start,found).c_str());
+
+				start = found+1;
+				found = videoInfo.find_first_of(" ,;",found+1);
+				//double master_time = atoi(videoInfo.substr(start,found).c_str());
+				//uint64_t master_time = 0x0;// = _atoi64(videoInfo.substr(start,found).c_str());
+				//sscanf_s(videoInfo.substr(start,found).c_str(), "%016I64x", &master_time1);
+				sscanf_s(videoInfo.substr(start,found).c_str(), "%016I64x", master_time);
+				//printf("master_time  : %f - %I64u\n", master_time, ntoh64(master_time));
+
+				start = found+1;
+				found = videoInfo.find_first_of(" ,;",found+1);
+				//double master_system = atoi(videoInfo.substr(start,found).c_str());
+				uint64_t master_system = 0x0;// = _atoi64(videoInfo.substr(start,found).c_str());
+				sscanf_s(videoInfo.substr(start,found).c_str(), "%016I64x", &master_system);
+				//printf("master_system: %f - %I64u\n", master_system, ntoh64(master_system));
+
+				//*master_time = (uint64_t)0x1234567898765432;
+				//master_system = 0x9876543212345678;
+				//printf("master_time  %016I64x : %I64u >>> master_system: %016I64x - %I64u\n", master_time, ntoh64(master_time), master_system, ntoh64(master_system));
+
+				if(delay < 0.0)
+				{
+					printf("UDP stream stop. Video not init.\n");
+					notifyStopOrRestartVideo(side);
+				}
+
+				*snt_date = sent_date;
+				//g_UDPDelay = delay;
+				return delay;
+			}
+			else
+			{
+				//printf("Wrong client id--->.\n");
+			}
+		}
+	}
+	//else if(received == SOCKET_TIMEOUT)
+		//printf("\nVIDEO SOCKET TIMED OUT.\n");
+	//else
+	//	printf("No data received = %d\n", received);
+
+	return -1;
+}
+/* Send UDP get clock command to the audio server.
+ */
+void sendGetAudioClockCommand(int stream)
+{
+	double sent_date = getGlobalVideoTimer(stream) / (double)1000;
+
+	char buf[256];
+    sprintf(buf, "%d;%d;%.20f;", _clientSenderID, stream, sent_date);
+	std::string command = "GET_AUDIO_CLOCK;";
+	command.append(buf);
+	//command += STR_END_MSG;
+	//commandReceiver->send(command);
+
+	//printf("COMMAND TO SERVER:  %s", command.c_str());
+	//bool sent = udpConnection->Send(command.c_str(),command.length());
+	bool sent = sendUDPData(command.c_str());
+	if(!sent)
+		printf("**********Couldn't send UDP data**********\n");
+}
+
+void sendGetAudioClockCommand(int stream, double sent_date)
+{
+	char buf[256];
+    sprintf(buf, "%d;%d;%.20f;", _clientSenderID, stream, sent_date);
+	std::string command = "GET_AUDIO_CLOCK;";
+	command.append(buf);
+	//command += STR_END_MSG;
+	//commandReceiver->send(command);
+
+	//printf("COMMAND TO SERVER:  %s", command.c_str());
+	//bool sent = udpConnection->Send(command.c_str(),command.length());
+	bool sent = sendUDPData(command.c_str());
+	if(!sent)
+		printf("**********Couldn't send UDP data**********\n");
+}
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////// TCP ///////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+/* Setup a TCP connection and wait for the "READY" signal to be sent.
+ */
+
+/* Send TCP play video command to the audio server.
+ */
+int playVideoCommand(int clientID, int side, char* fileName)
+{
+	//udpConnection->SetNonBlocking(true);
+
+	char buf[256];
+	sprintf(buf, "%d;%d;%s;", clientID, side, fileName);
+	std::string videoInfo = "PLAY_VIDEO;";
+	videoInfo.append(buf);
+
+	sendTCPData(videoInfo.c_str());
+	printf("Send play command:  %s\n", videoInfo.c_str());
+	return 0;
+}
+/* Send TCP stop video command to the audio server.
+ */
+int stopVideoCommand(int clientID, int side)
+{
+	//udpConnection->SetNonBlocking(false);
+
+	char buf[256];
+	sprintf(buf, "%d;%d;", clientID, side);
+	std::string videoInfo = "STOP_VIDEO;";
+	videoInfo.append(buf);
+
+	sendTCPData(videoInfo.c_str());
+	printf("Send stop command:  %s\n", videoInfo.c_str());
+	return 0;
+}
+/* Send TCP pause video command to the audio server.
+ */
+int pauseVideoCommand(int clientID, int side)
+{
+	char buf[256];
+	sprintf(buf, "%d;%d;", clientID, side);
+	std::string videoInfo = "PAUSE_VIDEO;";
+	videoInfo.append(buf);
+
+	sendTCPData(videoInfo.c_str());
+	printf("Send pause command:  %s\n", videoInfo.c_str());
+
+	//udpConnection->SetNonBlocking(false);
+
+	return 0;
+}
+/* Send TCP change volume command to the audio server.
+ */
+int changeVolumeCommand(int clientID, int side, float vol)
+{
+	vol = (vol < 0) ? 0 : vol;
+	vol = (vol > 1) ? 1 : vol;
+	char buf[256];
+	sprintf(buf, "%d;%d;%f;", clientID, side, vol);
+	std::string videoInfo = "CHANGE_VOLUME;";
+	videoInfo.append(buf);
+
+	sendTCPData(videoInfo.c_str());
+	printf("Send change volume command:  %s\n", videoInfo.c_str());
+	return 0;
+}
+/* Send TCP seek stream command to the audio server.
+ */
+int seekVideoCommand(int clientID, int side, double seekDur)
+{
+	char buf[256];
+	sprintf(buf, "%d;%d;%f;", clientID, side, seekDur);
+	std::string videoInfo = "SEEK_VIDEO;";
+	videoInfo.append(buf);
+
+	sendTCPData(videoInfo.c_str());
+	printf("Send change seek command:  %s\n", videoInfo.c_str());
+	return 0;
+}
+/* Parse and process incoming TCP commands.
+ * Commands:
+ * VIDEO_FINISHED, int side
+ */
+void parseTCPCommands()
+{
+	std::string remainder;
+	std::vector<std::string> commands;
+	// Listen for incoming commands
+
+	char message[DEFAULT_BUFLEN];
+	recieved = getTCPData(message);
+
+	if (recieved > 1)
+	{
+		commands[i].assign(message);
+
+	//if (commandReceiver->receiveStrings(commands, remainder) > 0)
+	//{
+	//	//for (int i = commands.size()-1; i >= 0; i--)
+	//	for (int i = 0; i < commands.size(); i++)
+	//   {
+		   if(!commands[i].empty() && (commands[i].compare(STR_END_MSG) != 0))
+		   // If the command string is not blank
+		   //if(!commands[i].empty())
+		   {
+				//printf("commands:: %s\n", commands[i].c_str());
+				int found = 0, start = 0;
+				found = commands[i].find_first_of(" ,;");
+				string command = commands[i].substr (start,found-start);
+
+#if 0
+				if(command.compare("DELAY") == 0)
+				{
+					start = found+1;
+					found = commands[i].find_first_of(" ,;",found+1);
+					int side = atoi(commands[i].substr(start,found).c_str());
+					start = found+1;
+					found = commands[i].find_first_of(" ,;",found+1);
+					double delay = atof(commands[i].substr(start,found).c_str());
+					printf("AUDIO_CLOCK[%d]: %f\n", side, delay);
+				}
+#endif
+				if(command.compare("VIDEO_FINISHED") == 0)
+				{
+					start = found+1;
+					found = commands[i].find_first_of(" ,;",found+1);
+					int side = atoi(commands[i].substr(start,found).c_str());
+
+					printf("\nNET::Recieved stop command ---- SIDE = %d\n", side);
+					//stopVideo(side);
+					notifyStopOrRestartVideo(side);
+				}
+				if(command.compare("LOAD_VIDEO") == 0)
+				{
+					//start = found+1;
+					//found = commands[i].find_first_of(" ,;",found+1);
+					//string videoName = commands[i].substr(start,found).c_str();
+					start = found+1;
+					found = commands[i].find_first_of(";", found+1);
+					string videoName = commands[i].substr(start,found-start);
+
+					start = found+1;
+					found = commands[i].find_first_of(" ,;",found+1);
+					int side = atoi(commands[i].substr(start,found).c_str());
+
+					printf("\nNET::Recieved load command ---- VIDEONAME: %s ---- SIDE = %d\n", videoName.c_str(), side);
+					//notifyScreenSyncLoadVideo("C:\\Users\\THoR\\Desktop\\VJ\\Vids\\out.mp4", side);
+					notifyScreenSyncLoadVideo(videoName, side);
+				}
+				if(command.compare("SEEK_VIDEO") == 0)
+				{
+					start = found+1;
+					found = commands[i].find_first_of(" ,;",found+1);
+					int side = atoi(commands[i].substr(start,found).c_str());
+					start = found+1;
+					found = commands[i].find_first_of(" ,;",found+1);
+					double seekBaseTime = atof(commands[i].substr(start,found).c_str());
+					start = found+1;
+					found = commands[i].find_first_of(" ,;",found+1);
+					double seekDur = atof(commands[i].substr(start,found).c_str());
+
+					printf("\nNET::Recieved seek command ---- SIDE: %d ---- SEEKDUR = %f ---- SEEKBASETIME = %f\n", side, seekDur, seekBaseTime);
+					seekVideo(side, seekDur, seekBaseTime, false);
+					//notifyScreenSyncLoadVideo(videoName, side);
+				}
+				if(command.compare("PAUSE_VIDEO") == 0)
+				{
+					start = found+1;
+					found = commands[i].find_first_of(" ,;",found+1);
+					int side = atoi(commands[i].substr(start,found).c_str());
+
+					printf("\nNET::Recieved pause command ---- SIDE = %d\n", side);
+					pauseVideo(side, false);
+				}
+#if 0
+				else if(command.compare("HEARTBEAT") == 0)
+				{
+					#ifdef DEBUG_PRINTF
+						//printf("-------------------Heart-------------------\n");
+					#endif
+				}
+#endif
+		   }
+	   //}
+	}
+}
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////// Net sync thread ///////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void syncThread(void* dummy)
+{
+	double now[MAXSTREAMS], start[MAXSTREAMS];
+	//double now = 0.0, start = 0.0;
+	int totalActiveVideos = 0;
+
+	if(!broadcastAudio)
+	{
+		udpConnection->SetNonBlocking(false);
+		udpConnection->SetTimeoutReceive(2);
+	}
+	else
+	{
+		//udpConnection->SetTimeoutReceive(0);
+		udpConnection->SetNonBlocking(true);
+	}
+
+	while(true)
+	{
+		totalActiveVideos = 0;
+#if 1
+#ifdef NETWORKED_AUDIO
+		if(getNetTimer() > 250)
+		{
+			startNetTimer();
+			if(/*!commandReceiver->send("") && */!commandReceiver->isConnected()) // Check if the client is still connected to the audio server
+			{
+				printf("###Re-connecting to the server...\n");
+				audioClientSetup(); // If not setup TCP/UDP connection
+
+				if(!broadcastAudio)
+				{
+					udpConnection->SetNonBlocking(false);
+					udpConnection->SetTimeoutReceive(2);
+				}
+				else
+				{
+					//udpConnection->SetTimeoutReceive(0);
+					udpConnection->SetNonBlocking(true);
+				}
+			}
+#endif
+		}
+		
+		if(commandReceiver->isConnected())
+			parseTCPCommands();
+
+		for (int i = 0 ; i < MAXSTREAMS; i++)
+		{
+			if(videoTypeStreams[i] == ffmpeg)
+				if (status[i] == aplay)
+				{
+					totalActiveVideos++;
+#if 0
+					netAudioClock = g_UDPDelay+(avgNetLatency/(double)1000);
+#ifdef NETWORKED_AUDIO
+					//if(netAudioClock == preClock[i] || netAudioClock < 0)
+					if(preClock[i] > netAudioClock)
+					{
+						netAudioClock = -1;
+						preClock[i] = 0.0;
+					}
+					else
+					{
+						preClock[i] = netAudioClock;
+						diff[i] = (netAudioClock-currGlobalTimer[i]);
+						//diff[i] = diff[i] > 0 ? diff[i] : (avgNetLatency/(double)1000);
+					}
+					double newClock = currGlobalTimer[i] + diff[i];
+					//double newClock = 0.0;
+#endif
+#endif
+					//now = getGlobalVideoTimer(i) / (double)1000;
+					now[i] = getGlobalVideoTimer(i) / (double)1000;
+					//printf("now[%d]: %f - start[%d]: %f - fabs[%d]: %f\n", i, now[i], i, start[i], i, fabs(now[i]-start[i]));
+					//if(fabs(now[i]-start[i]) > 0.01)
+					//if(fabs(now-start) > 0.01)
+					{
+						start[i] = now[i];
+						//	start = now;
+						if(!broadcastAudio)
+						{
+							sendGetAudioClockCommand(i);
+							//printf(" - Sent clock command(%d)\n", i);
+						}
+					//}
+					
+						double sent_date = -1;
+
+						//double udpAudioClock = parseUDPCommands(i, &sent_date);
+						uint64_t master_time = 0x0;
+						double udpAudioClock = parseUDPCommands(i, &sent_date, &master_time);
+						//printf("master_time>%016I64x : %I64u : %f\n", master_time, ntoh64(master_time), master_time / 1000000.0);
+
+						double receive_date = getGlobalVideoTimer(i) / (double)1000;
+
+						//netAudioCloeck[i] = -1;
+						if(sent_date >= 0 && udpAudioClock >= 0)
+						{
+							//netAudioClock[i] = /*ceil((receive_date - sent_date) / 2.0f*/ + udpAudioClock;//);
+							if(!broadcastAudio)
+								netAudioClock[i] = ((receive_date - sent_date) / 2.0f + udpAudioClock);
+							else
+								netAudioClock[i] = (udpAudioClock);
+							//netAudioClock[i] = master_time;
+							//netAudioClock[i] =  /*((receive_date - sent_date) / 2.0f) +*/ (master_time / 1000000.0);
+							//printf(">>>>Recieved timestamp: %I64u\n", netAudioClock[i]);
+						}
+						//printf(">>>>Recieved timestamp %d - now: %06.3f - netAudioClock: %06.3f - ServerClock: %06.3f - sent_date: %06.3f - receive_date: %06.3f.\n", i, now[i], netAudioClock[i], udpAudioClock, sent_date, receive_date);
+					}
+				}
+		}
+
+		Sleep(1000); // give up resources.
+		//Sleep(PCFreq / 20);
+#endif
+		//DWORD core = GetCurrentProcessorNumber();
+		//printf("~~~~~Network Thread - Process Affinity: %d\n", core);
+		if(totalActiveVideos == 0)
+		{
+			//printf("~~~~~Network Thread - Sleeping\n");
+			Sleep(100);
+			//start = 0;
+			//now = 0;
+			for(int i=0; i<MAXSTREAMS; i++)
+			{
+				start[i] = 0;
+				now[i] = 0;
+			}
+
+			//udpConnection->SetNonBlocking(true);
+			////udpConnection->SetTimeoutReceive(0);
+			//string message;
+			//bool getNext = true;
+			//while (getNext)
+			//{
+			//	sprintf(msg, "");
+			//	int bufsize = udpConnection->GetReceiveBufferSize();
+			//	int received = udpConnection->Receive(msg, bufsize);
+			//	message=msg;
+
+			//	if (message == "")
+			//	{
+			//		getNext = false;
+			//		//printf("UDP buffer finished:-------------\n");
+			//	}
+			//}
+		}
+	}
+}
+
+#endif
