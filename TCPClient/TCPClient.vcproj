@@ -115,7 +115,7 @@
 			<Tool
 				Name="VCCLCompilerTool"
 				Optimization="0"
-				AdditionalIncludeDirectories="&quot;../../../ODIO/Video/src\ffmpeg-20130915-git-7ac6c63-win64-dev\include&quot;;&quot;../../../ODIO/Video/src\ffmpeg-git-ceb0dd9-win64-dev\include&quot;;.\inc;..\..\..\ODImage;..\..\..\ODIO\Video;..\..\..\ODIO\Network;../../../3rdParty/openFrameworks/062/include;..\..\..\ODBase;..\..\..\Common;..\..\..\3rdParty\OpenAL1_3\include;..\..\..\3rdParty\freetype"
+				AdditionalIncludeDirectories="&quot;../../../ODIO/Video/src\ffmpeg-git-ceb0dd9-win64-dev\include&quot;;&quot;../../../ODIO/Video/src\ffmpeg-20130915-git-7ac6c63-win64-dev\include&quot;;.\inc;..\..\..\ODImage;..\..\..\ODIO\Video;..\..\..\ODIO\Network;../../../3rdParty/openFrameworks/062/include;..\..\..\ODBase;..\..\..\Common;..\..\..\3rdParty\OpenAL1_3\include;..\..\..\3rdParty\freetype"
 				PreprocessorDefinitions="WIN32;WIN64;WIN32_LEAN_AND_MEAN;VIDEO_DECODING;NETWORKED_AUDIO;VIDEO_PLAYBACK;"
 				MinimalRebuild="true"
 				BasicRuntimeChecks="3"
@@ -137,7 +137,7 @@
 				Name="VCLinkerTool"
 				AdditionalDependencies="Ws2_32.lib freetype-gl.lib freetypex64.lib"
 				ShowProgress="0"
-				AdditionalLibraryDirectories="&quot;../../../ODIO/Video/src\ffmpeg-20130915-git-7ac6c63-win64-dev\lib&quot;;./lib;../../../3rdParty/openFrameworks/062/lib;&quot;../../../ODIO/Video/src\ffmpeg-git-ceb0dd9-win64-dev\lib&quot;;..\..\..\3rdParty\freetype\bin\Release\;..\..\..\3rdParty\freetype\windows\freetype"
+				AdditionalLibraryDirectories="./lib;../../../3rdParty/openFrameworks/062/lib;&quot;../../../ODIO/Video/src\ffmpeg-git-ceb0dd9-win64-dev\lib&quot;;&quot;../../../ODIO/Video/src\ffmpeg-20130915-git-7ac6c63-win64-dev\lib&quot;;..\..\..\3rdParty\freetype\bin\Release\;..\..\..\3rdParty\freetype\windows\freetype"
 				IgnoreAllDefaultLibraries="false"
 				IgnoreDefaultLibraryNames="libcmt.lib"
 				GenerateDebugInformation="true"
@@ -266,7 +266,7 @@
 				Name="VCCLCompilerTool"
 				Optimization="2"
 				EnableIntrinsicFunctions="true"
-				AdditionalIncludeDirectories="&quot;../../../ODIO/Video/src\ffmpeg-20130915-git-7ac6c63-win64-dev\include&quot;;&quot;../../../ODIO/Video/src\ffmpeg-git-ceb0dd9-win64-dev\include&quot;;.\inc;..\..\..\ODImage;..\..\..\ODIO\Video;..\..\..\ODIO\Network;../../../3rdParty/openFrameworks/062/include;..\..\..\ODBase;..\..\..\Common;..\..\..\3rdParty\freetype"
+				AdditionalIncludeDirectories="&quot;../../../ODIO/Video/src\ffmpeg-git-ceb0dd9-win64-dev\include&quot;;&quot;../../../ODIO/Video/src\ffmpeg-20130915-git-7ac6c63-win64-dev\include&quot;;.\inc;..\..\..\ODImage;..\..\..\ODIO\Video;..\..\..\ODIO\Network;../../../3rdParty/openFrameworks/062/include;..\..\..\ODBase;..\..\..\Common;..\..\..\3rdParty\freetype"
 				PreprocessorDefinitions="WIN32;WIN64;WIN32_LEAN_AND_MEAN;VIDEO_DECODING;NETWORKED_AUDIO;VIDEO_PLAYBACK"
 				RuntimeLibrary="0"
 				EnableFunctionLevelLinking="true"
@@ -285,12 +285,10 @@
 			<Tool
 				Name="VCLinkerTool"
 				AdditionalDependencies="Ws2_32.lib freetype-gl.lib freetypex64.lib"
-				AdditionalLibraryDirectories="&quot;../../../ODIO/Video/src\ffmpeg-20130915-git-7ac6c63-win64-dev\lib&quot;;./lib;../../../3rdParty/openFrameworks/062/lib;&quot;../../../ODIO/Video/src\ffmpeg-git-ceb0dd9-win64-dev\lib&quot;;..\..\..\3rdParty\freetype\bin\Release\;..\..\..\3rdParty\freetype\windows\freetype"
+				AdditionalLibraryDirectories="&quot;../../../ODIO/Video/src\ffmpeg-git-ceb0dd9-win64-dev\lib&quot;;&quot;../../../ODIO/Video/src\ffmpeg-20130915-git-7ac6c63-win64-dev\lib&quot;;./lib;../../../3rdParty/openFrameworks/062/lib;..\..\..\3rdParty\freetype\bin\Release\;..\..\..\3rdParty\freetype\windows\freetype"
 				IgnoreDefaultLibraryNames=""
 				GenerateDebugInformation="false"
 				SubSystem="0"
-				OptimizeReferences="1"
-				EnableCOMDATFolding="2"
 				TargetMachine="17"
 			/>
 			<Tool
@@ -569,6 +567,8 @@
 				AdditionalLibraryDirectories="&quot;../../../ODIO/Video/src\ffmpeg-git-ceb0dd9-win64-dev\lib&quot;;&quot;../../../ODIO/Video/src\ffmpeg-20130915-git-7ac6c63-win64-dev\lib&quot;;./lib;../../../3rdParty/openFrameworks/062/lib;../../../3rdParty/OpenAL1_3/lib/Win64;..\..\..\3rdParty\freetype\bin\Release\;..\..\..\3rdParty\freetype\windows\freetype"
 				IgnoreDefaultLibraryNames="libcmt.lib"
 				GenerateDebugInformation="true"
+				GenerateMapFile="true"
+				MapExports="true"
 				TargetMachine="17"
 			/>
 			<Tool
@@ -827,16 +827,8 @@
 				</FileConfiguration>
 			</File>
 			<File
-				RelativePath="..\..\..\common\glfont.cpp"
+				RelativePath=".\glfont.cpp"
 				>
-				<FileConfiguration
-					Name="Debug_NOVIDEO|x64"
-					ExcludedFromBuild="true"
-					>
-					<Tool
-						Name="VCCLCompilerTool"
-					/>
-				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\main.cpp"
@@ -1058,7 +1050,7 @@
 				</FileConfiguration>
 			</File>
 			<File
-				RelativePath="..\..\..\common\glfont.h"
+				RelativePath=".\glfont.h"
 				>
 			</File>
 			<File
