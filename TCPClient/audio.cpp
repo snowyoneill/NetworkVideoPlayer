@@ -33,8 +33,6 @@
 //#include <AL/alc.h>
 //#include <AL/alext.h>
 
-//bool audioSourceInit[MAXSTREAMS] = {false};
-
 /* Some helper functions to get the name from the channel and type enums. */
 static const char *ChannelsName(ALenum chans)
 {
@@ -360,7 +358,6 @@ int AudioEnvironment::closeAudioStream(int sourceNum)
 				if(buffers[sourceNum] != NULL)
 				{
 					alDeleteBuffers(NUM_BUFFERS, buffers[sourceNum]);
-					//audioSourceInit[sourceNum] = false;
 					printf("\nClosing audio stream: %d - Deleting buffers.\n", sourceNum);
 					return 0;
 				}

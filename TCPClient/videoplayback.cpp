@@ -203,7 +203,7 @@ int videoCallback(int side, int delayms)
     return 0;
 }
 #endif
-//////////////////////////////////////////// INITIALISE AUDIO /////////////////////////////////////////////////
+///////////////////////////////////////// INITIALISE VIDEO/AUDIO //////////////////////////////////////////////
 
 void initVideoAudioPlayback(char *serverIP, int TCPPort, int UDPPort, int ClientID, int side, char* fileName, bool autostart, bool testLatency)
 {

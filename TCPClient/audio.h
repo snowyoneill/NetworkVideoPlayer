@@ -31,6 +31,7 @@ typedef long long int int64_t;
  * is a good length per buffer, as it fits 1, 2, 4, 6, 7, 8, 12, 14, 16, 24,
  * 28, and 32 bytes-per-frame sizes. */
 #define NUM_BUFFERS 4
+//#define BUFFER_SIZE 32256/4 //4096
 
 //---------------------------------------------------------------------------------------------------
 

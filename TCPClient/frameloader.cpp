@@ -1124,22 +1124,6 @@ void frameDecoder(void * parg)
  * callback again.
  */
 double getNextVideoFrame(double netClock, double pauseLength, int side, char *plainData)
-{
-	double ret = -5;
-#ifdef USE_ODBASE
-	videoStreamLock[side].grab();
-#else
-	WaitForSingleObject(videoStreamLock[side], INFINITE);
-#endif
-	if(videoSources[side] != NULL)
-		ret = videoSources[side]->video_refresh_timer(netClock, pauseLength, plainData);
-#ifdef USE_ODBASE
-	videoStreamLock[side].release();
-#else
-	ReleaseMutex(videoStreamLock[side]);
-#endif
-	return ret;
-}
 #else
 double getNextVideoFrame(double openALAudioClock, double pauseLength, int side, char *plainData)
 {
@@ -1150,7 +1134,12 @@ double getNextVideoFrame(double openALAudioClock, double pauseLength, int side, 
 	WaitForSingleObject(videoStreamLock[side], INFINITE);
 #endif
 	if(videoSources[side] != NULL)
+#ifdef NETWORKED_AUDIO
+		ret = videoSources[side]->video_refresh_timer(netClock, pauseLength, plainData);
+#else
 		ret = videoSources[side]->video_refresh_timer(openALAudioClock, pauseLength, plainData);
+#endif
+
 #ifdef USE_ODBASE
 	videoStreamLock[side].release();
 #else
