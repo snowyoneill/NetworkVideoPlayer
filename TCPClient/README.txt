@@ -160,6 +160,16 @@ Checkmessages: uses a standard queue with locks to record commands - the reason 
 
 Pbo:
 
+----------------------------------LIMITATIONS---------------------------------
+1. Lots!
+2. This whole thing needs to be re-written in a OOP fashion. Like completely - its currently written a very crappy procedural notation to adhear to a api interface from a different project.
+3. Bugs - as far as the eye can see!
+		- in the process of adding a pbo array I introduced many temporary hacks to figure out issues i was noticing with the frame rendering pipeline.
+4. The project needs to be rewritten to make it more asynchronous - decode frames directly in the pbo arrary for example.
+
+Bugs-:
+Multimedia timers with pbos currently doesn't work.		
+		  
 
 ----------------------------------REFERENCES----------------------------------
 http://dranger.com/ffmpeg/ffmpegtutorial_all.html

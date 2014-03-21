@@ -1,7 +1,7 @@
 //#ifndef VIDEO_PLAYBACK
 //#define VIDEO_PLAYBACK
 
-#define LOG
+//#define LOG
 #include "constants.h"
 
 #include <string>

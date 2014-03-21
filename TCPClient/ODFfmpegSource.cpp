@@ -5,11 +5,10 @@
 
 #include "ODFfmpegSource.h"
 
-
-#if 1
-#define AVCODEC_MAX_AUDIO_FRAME_SIZE 192000
-
 #include <windows.h>
+
+#if 0
+#define AVCODEC_MAX_AUDIO_FRAME_SIZE 192000
 #include <time.h>
 //#include <sys/time.h>
 //#include <sys/time.h>
@@ -57,7 +56,6 @@ int64_t av_gettime(void) {
 // Need to do some FFMPEG setup once per application.
 static bool initializedFfmpeg = false;
 
-/////////////////////////////// INTERNAL STATE //////////////////////////////
 #define MAX_AUDIOQ_SIZE (5 * 16 * 1024)
 #if 1
 #define MAX_VIDEOQ_SIZE (5 * 16 * 1024)
@@ -76,8 +74,6 @@ typedef struct VideoPicture {
 
 typedef unsigned __int8   uint8_t;
 
-////////////////////////////// GLOBAL VARIABLES /////////////////////////////
-
 // Special value indicating that we do not know the timestamp for 
 // current frame.
 const double ODFfmpegSource::UnknownTime = -1.0;
@@ -86,8 +82,12 @@ const double ODFfmpegSource::UnknownTime = -1.0;
 // the video
 const double ODFfmpegSource::UnknownFPS = -1.0;
 
-////////////////////////////////////////////////////////////////////////////
+AVPacket flush_pkt, end_pkt;
+//bool decoderReachedEnd = false;
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////// INTERNAL VIDEO STATE ////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
 struct ODFfmpegSource::State
 {
     // Pointer to parent object, so state can access its members and those of
@@ -133,6 +133,13 @@ struct ODFfmpegSource::State
 	// Pixel format to use for raw frame. See avutil.h
 	PixelFormat desiredRawFormat_;
 
+#if 0
+	/*
+	 * Use of the global opaque pts is depreciated
+	 * https://github.com/FFmpeg/FFmpeg/commits/master/ffplay.c?page=14
+	 */
+
+
 	// The last valid presentation time we have seen. We use this to determine
 	// frame and packet timestamps in case not every packet has this info.
     //
@@ -145,14 +152,17 @@ struct ODFfmpegSource::State
 	//----------------------------------------------------------------------------
 	//SINT64 GlobalLastPresentationTime_;
 	//----------------------------------------------------------------------------
+#endif
 
 	State(ODFfmpegSource* parent);
 	~State();
 
+#if 0
 	// Memory allocation methods used internally. These help propagate timestamp
 	// values.
 	static int allocateFrame(AVCodecContext* codecCtx, AVFrame* frame);
     static void releaseFrame(AVCodecContext* codecCtx, AVFrame* frame);
+#endif
 
 	//----------------------------------------------------------------------------
 	//int allocateFrame(AVCodecContext* codecCtx, AVFrame* frame);
@@ -225,24 +235,10 @@ struct ODFfmpegSource::State
 };
 
 
-/* get the current video clock value */
-//static double get_video_clock()
-//{
-//    double delta;
-//    //if (is->paused) {
-//    //    delta = 0;
-//    //} else {
-//        delta = (av_gettime() - video_current_pts_time) / 1000000.0;
-//    //}
-//    return video_current_pts + delta;
-//}
 
-
-/////////////////////////// AUDIO/VIDEO QUEUES //////////////////////////////
-AVPacket flush_pkt, end_pkt;
-
-bool videoDone = false;
-
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////// AUDIO/VIDEO QUEUES ///////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
 void packet_queue_init(PacketQueue *q) {
 	memset(q, 0, sizeof(PacketQueue));
 }
@@ -373,7 +369,7 @@ int ODFfmpegSource::audio_packet_queue_get(PacketQueue *q, AVPacket *pkt)
 }
 #endif
 
-#if 1
+#ifdef VIDEO_DECODING
 void ODFfmpegSource::video_packet_queue_flush(PacketQueue *q)
 {
 	AVPacketList *pkt, *pkt1;
@@ -400,9 +396,6 @@ void ODFfmpegSource::video_packet_queue_flush(PacketQueue *q)
 #endif
 }
 
-//HANDLE videoqMutex = CreateMutex(NULL, false, NULL);
-//int vid_packet_queue_put(PacketQueue *q, AVPacket *pkt);
-//int vid_packet_queue_get(PacketQueue *q, AVPacket *pkt);
 int ODFfmpegSource::vid_packet_queue_put(PacketQueue *q, AVPacket *pkt)
 {
 	AVPacketList *pkt1;
@@ -421,7 +414,6 @@ int ODFfmpegSource::vid_packet_queue_put(PacketQueue *q, AVPacket *pkt)
 #else
 	WaitForSingleObject(state->videoqMutex, INFINITE);
 #endif
-	//WaitForSingleObject(videoqMutex, INFINITE);
 	//SDL_LockMutex(q->mutex);
 
 	if (!q->last_pkt)
@@ -444,7 +436,6 @@ int ODFfmpegSource::vid_packet_queue_put(PacketQueue *q, AVPacket *pkt)
 #else
 	ReleaseMutex(state->videoqMutex);
 #endif
-	//ReleaseMutex(videoqMutex);
 	//printf("put: nb_packets %d\n", q->nb_packets);
 
 	return 0;
@@ -455,11 +446,10 @@ int ODFfmpegSource::vid_packet_queue_get(PacketQueue *q, AVPacket *pkt)
 	AVPacketList *pkt1;
 	int ret = 0;
 
-	//SDL_LockMutex(q->mutex);
-
 	//if(state->quit)
 	//	return -1;
 
+	//SDL_LockMutex(q->mutex);
 	//state->videoqMutex.grab();
 	//WaitForSingleObject(videoqMutex, INFINITE);
 	while(ret == 0)
@@ -511,19 +501,20 @@ int ODFfmpegSource::vid_packet_queue_get(PacketQueue *q, AVPacket *pkt)
 #endif
 			//WaitForSingleObject(args->pictqCond,INFINITE);
 			//return -1;
-			//ret = 0;
-			//ret = -1;
 			//printf("WAIT");
 		}
 		//state->videoqMutex.release();
 	}
 	//SDL_UnlockMutex(q->mutex);
-
-	//ReleaseMutex(videoqMutex);
 	//return -1;
 	return ret;
 }
 #endif
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////// FRAME DISPLAY/DELAY ///////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+#if 0
 #ifdef VIDEO_DECODING
 /* no AV sync correction is done if below the minimum AV sync threshold */
 #define AV_SYNC_THRESHOLD_MIN 0.01
@@ -531,7 +522,9 @@ int ODFfmpegSource::vid_packet_queue_get(PacketQueue *q, AVPacket *pkt)
 #define AV_SYNC_THRESHOLD_MAX 0.1
 /* If a frame duration is longer than this, it will not be duplicated to compensate AV sync */
 #define AV_SYNC_FRAMEDUP_THRESHOLD 0.1
-/////////////////////////// FRAME DISPLAY/DELAY //////////////////////////////
+#endif
+#endif
+
 #ifdef NETWORKED_AUDIO
 /* Uses the incoming audio clock from the server to calculate the next frame delay and copies the current index in the ring buffer to the dataBuff array.
  */
@@ -766,8 +759,6 @@ double ODFfmpegSource::video_refresh_timer(double openALAudioClock, double pause
 #else
 				ReleaseSemaphore(state->pictqSemaphore, 1, NULL );
 #endif
-
-				videoDone = true;
 			}
 
 			return f_delay;	
@@ -779,7 +770,6 @@ double ODFfmpegSource::video_refresh_timer(double openALAudioClock, double pause
 		return -100;
 	}
 }
-#endif
 
 double ODFfmpegSource::video_pts()
 {
@@ -806,7 +796,7 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 	if(state->codecCtx_)
 	{
 		//state->pictqMutex.grab();
-		if(state->pictq_size == 0 && ptsClk == 0)
+		if(state->pictq_size == 0 && ptsClk < 0)
 		{
 			//state->pictqMutex.release();
 			//if(atVideoEnd_)
@@ -815,6 +805,9 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 				printf(")))video_refresh_timer_pbo - state quit is -50\n\n");
 				return -50;
 			}
+
+			if(ptsClk < -1)
+				return -50;
 			//state->pictqSemaphore.signal();
 			//printf(")))video_refresh_timer_pbo - size: %d\n", state->pictq_size);
 			return -1;
@@ -836,6 +829,8 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 			{
 				/* if incorrect delay, use previous one */
 				delay = state->frame_last_delay;
+				//printf("pbo -> ptsClk: %09.6f...Delay: %f - state->frame_last_pts: %f\n", ptsClk, delay, state->frame_last_pts);
+				//return -1;
 			}
 			/* save for next time */
 			state->frame_last_delay = delay;
@@ -879,6 +874,8 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 			actual_delay = state->frame_timer - (av_gettime() / 1000000.0) + pauseLength;
 			//actual_delay = state->frame_timer - ref_clock + pauseLength;
 			
+			//printf("pbo -> ptsClk: %09.6f - ref_clock: %09.6f - diff: %09.6f - pauseLength: %09.6f - actual_delay: %09.6f\n", ptsClk, ref_clock, diff, pauseLength, actual_delay);
+
 			//printf("pbo -> frame_timer: %09.6f - av_gettime: %09.6f - pauseLength: %09.6f - actual_delay: %09.6f\n", state->frame_timer, ref_clock, pauseLength, actual_delay);
 			//printf(" - pauseLength %f - actual_delay: %07.2f", pauseLength, actual_delay);
 			if(actual_delay < 0.01) {
@@ -903,6 +900,9 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 			//	seek(netClock, -diff);
 			//}
 
+			
+			//printf("ptsClk: %6.2f - ref_clock: %6.2f - diff: %6.2f - sync_threshold: %6.2f - f_delay: %6.2f.\n", ptsClk, ref_clock, diff, sync_threshold, f_delay);
+
 			//printf("vp->pts: %6.2f - ref_clock: %6.2f - diff: %6.2f - sync_threshold: %6.2f - f_delay: %6.2f.\n", vp->pts, ref_clock, diff, sync_threshold, f_delay);
 			//if(diff <= sync_threshold || diff > sync_threshold * VIDEO_PICTURE_QUEUE_SIZE)
 			//if(diff <= -sync_threshold || diff > sync_threshold)
@@ -926,8 +926,6 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 			//	state->pictqMutex.release();
 			//	//ReleaseSemaphore(state->pictqSemaphore, 1, NULL );
 			//	state->pictqSemaphore.signal();	
-
-			//	videoDone = true;
 			//}
 
 			return f_delay;
@@ -953,15 +951,6 @@ int ODFfmpegSource::video_refresh_timer_next(char *dataBuff, int pboIndex, doubl
 #else
 		WaitForSingleObject(state->pictqMutex, INFINITE);
 #endif
-		if(currFrameIndex_ == int(duration_ * fps_))
-		{
-#ifdef USE_ODBASE
-			state->pictqMutex.release();
-#else
-			ReleaseMutex(state->pictqMutex);
-#endif
-			return -1*50;
-		}
 
 		if(state->pictq_size == 0)
 		{
@@ -974,9 +963,32 @@ int ODFfmpegSource::video_refresh_timer_next(char *dataBuff, int pboIndex, doubl
 			//if(atVideoEnd_)
 			if(state->quit)
 			{
-				printf(")))video_refresh_timer_next - state quit is -50\n\n");
+				//printf(")))video_refresh_timer_next - state quit is -50\n\n");
 				return -50;
 			}
+
+	//		if(currFrameIndex_ == int(duration_ * fps_))
+	//		{
+	//#ifdef USE_ODBASE
+	//			state->pictqMutex.release();
+	//#else
+	//			ReleaseMutex(state->pictqMutex);
+	//#endif
+	//			return -1*50;
+	//		}
+
+	//	if(decoderReachedEnd)
+	//	{
+	//#ifdef USE_ODBASE
+	//			state->pictqMutex.release();
+	//#else
+	//			ReleaseMutex(state->pictqMutex);
+	//#endif
+	//		//printf(")))video_refresh_timer_next - decoder reached end is -50\n\n");
+	//		return -50;
+	//	}
+
+
 			//state->pictqSemaphore.signal();	
 			return  -1;
 		}
@@ -1001,43 +1013,45 @@ int ODFfmpegSource::video_refresh_timer_next(char *dataBuff, int pboIndex, doubl
 			//	lastRingIdx = state->pictq_rindex;
 			//}
 			//else
-			{
-				/*int newPboIndex = state->pictq_rindex + pboIndex;
-				if(newPboIndex >= VIDEO_PICTURE_QUEUE_SIZE)
-					newPboIndex = newPboIndex-VIDEO_PICTURE_QUEUE_SIZE;*/
+	//{
+	//	/*int newPboIndex = state->pictq_rindex + pboIndex;
+	//	if(newPboIndex >= VIDEO_PICTURE_QUEUE_SIZE)
+	//		newPboIndex = newPboIndex-VIDEO_PICTURE_QUEUE_SIZE;*/
 
-			/*	if(newPboIndex >= VIDEO_PICTURE_QUEUE_SIZE)
-					newPboIndex = 0;*/
+	///*	if(newPboIndex >= VIDEO_PICTURE_QUEUE_SIZE)
+	//		newPboIndex = 0;*/
 
-				int wIdx = (state->pictq_rindex + state->pictq_size) % VIDEO_PICTURE_QUEUE_SIZE;
-				//if(pboCpyIdx >= wIdx)
-				
-				if(pboCpyIdx == wIdx && state->pictq_size < VIDEO_PICTURE_QUEUE_SIZE)
-				//if(pboIndex == wIdx && state->pictq_size < VIDEO_PICTURE_QUEUE_SIZE)
+	//	int wIdx = (state->pictq_rindex + state->pictq_size) % VIDEO_PICTURE_QUEUE_SIZE;
+	//	//if(pboCpyIdx >= wIdx)
+	//	
+	//	if(pboCpyIdx == wIdx && state->pictq_size < VIDEO_PICTURE_QUEUE_SIZE)
+	//	//if(pboIndex == wIdx && state->pictq_size < VIDEO_PICTURE_QUEUE_SIZE)
 
 
-				//if(pboIndex >= state->pictq_size)
-				{
-					//printf("---wIdx: %d - pboCpyIdx: %d\n", wIdx, pboCpyIdx);
-					//state->pictqMutex.release();
-					//Sleep(5);
-					return -1;
-				}
-			}
+	//	//if(pboIndex >= state->pictq_size)
+	//	{
+	//		//printf("---wIdx: %d - pboCpyIdx: %d\n", wIdx, pboCpyIdx);
+	//		//state->pictqMutex.release();
+	//		//Sleep(5);
+	//		return -1;
+	//	}
+	//}
 			//state->pictqMutex.release();
 			//int newPboIndex = (state->pictq_rindex + pboIndex) % VIDEO_PICTURE_QUEUE_SIZE;
 
 			//int newPboIndex = (state->pictq_rindex + pboCpyIdx) % VIDEO_PICTURE_QUEUE_SIZE;
 
-			int newPboIndex = pboCpyIdx;
+	//int newPboIndex = pboCpyIdx;
 			//int newPboIndex = pboIndex;
 			
-
-			vp = &state->pictq[newPboIndex];
-			//printf("state->pictq_size: %d - pictq_rindex: %d - pboIndex: %d - newPboIndex: %d\n", state->pictq_size, state->pictq_rindex, pboIndex, newPboIndex);
+			vp = &state->pictq[state->pictq_rindex];
+	//vp = &state->pictq[newPboIndex];
+	//printf("state->pictq_size: %d - pictq_rindex: %d - pboIndex: %d - newPboIndex: %d\n", state->pictq_size, state->pictq_rindex, pboIndex, newPboIndex);
+			
+			//printf("state->pictq_size: %d - pictq_rindex: %d\n", state->pictq_size, state->pictq_rindex);
 
 			//printf("state->pictq_size: %d - pictq_rindex: %d - pboCpyIdx: %d - newPboIndex: %d\n", state->pictq_size, state->pictq_rindex, pboCpyIdx, newPboIndex);
-			pboCpyIdx = (pboCpyIdx + 1) % VIDEO_PICTURE_QUEUE_SIZE;
+	//pboCpyIdx = (pboCpyIdx + 1) % VIDEO_PICTURE_QUEUE_SIZE;
 			/*
 			printf("pictq_rindex: %d - pboIndex:     %d - newPboIndex:  %d\n", state->pictq_rindex, pboIndex, newPboIndex);
 			if(pboIndex == 1)
@@ -1095,8 +1109,6 @@ int ODFfmpegSource::video_refresh_timer_next(char *dataBuff, int pboIndex, doubl
 #else
 				ReleaseSemaphore(state->pictqSemaphore, 1, NULL );
 #endif
-
-				videoDone = true;
 			}
 
 
@@ -1108,6 +1120,18 @@ int ODFfmpegSource::video_refresh_timer_next(char *dataBuff, int pboIndex, doubl
 	// If the video codec has not yet been initialised.
 	return -100;
 }
+
+/* get the current video clock value */
+//static double get_video_clock()
+//{
+//    double delta;
+//    //if (is->paused) {
+//    //    delta = 0;
+//    //} else {
+//        delta = (av_gettime() - video_current_pts_time) / 1000000.0;
+//    //}
+//    return video_current_pts + delta;
+//}
 
 #if 0
 void scale_video()
@@ -1149,8 +1173,11 @@ void scale_video()
 }
 #endif
 
-////////////////////////////////// AUDIO DECODING /////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////// AUDIO DECODING /////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#ifdef AUDIO_DECODING
 /* Returns information about the given audio stream. Returns 0 on success. */
 int ODFfmpegSource::getAVAudioInfo(unsigned int *rate, int *channels, int *type)
 {
@@ -1217,7 +1244,6 @@ int ODFfmpegSource::getAVAudioInfo(unsigned int *rate, int *channels, int *type)
     return 0;
 }
 
-#ifdef AUDIO_DECODING
 /* Returns the current audio clock */
 double ODFfmpegSource::get_audio_clock()
 {
@@ -1244,8 +1270,7 @@ double ODFfmpegSource::get_audio_clock()
 	
 	return pts;
 }
-#endif
-#ifdef AUDIO_DECODING
+
 //unsigned int audio_buf_size = 0;
 //char audio_buf[AVCODEC_MAX_AUDIO_FRAME_SIZE];
 int ODFfmpegSource::getAVAudioData(char *data, int requested_buffer_size)
@@ -1362,9 +1387,7 @@ int ODFfmpegSource::getAVAudioData(char *data, int requested_buffer_size)
     /* Return the number of bytes we were able to get */
     return dec;
 }
-#endif
 
-#ifdef AUDIO_DECODING
 /* Gets the next audio packet from the audio queue, decodes it and copies the result to the audio_buf array.
  * The current audio clock time is maintained by this method.
  * Should only be called by getAudioBuffer().
@@ -1486,10 +1509,30 @@ int ODFfmpegSource::getAudioBuffer(char* stream, int requested_buffer_size)
 }
 #endif
 
-////////////////////// CONSTRUCTION AND DESTRUCTION ////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////// CONSTRUCTION AND DESTRUCTION //////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-//SINT64 GlobalLastPresentationTime_;
+#if 0
+/*
+ * Use of the global opaque pts is depreciated
+ * https://github.com/FFmpeg/FFmpeg/commits/master/ffplay.c?page=14
+ */	
+
+/*
+	In ffplay:get_video_frame(), use frame->pkt_pts rather than reordered_opaque.
+
+	AVCodecContext.reordered_opaque is deprecated for this specific use.
+
+	Signed-off-by: Mans Rullgard <mans@mansr.com>
+	(cherry picked from commit 2855080)
+
+	Stefano Sabatini authored 3 years ago
+	 michaelni committed 3 years ago
+*/
+
 SINT64 ODFfmpegSource::State::GlobalLastPresentationTime_ = AV_NOPTS_VALUE;
+#endif
 
 ODFfmpegSource::State::State(ODFfmpegSource* parent) :
     parent_(parent), formatCtx_(NULL), videoStream_(NULL), codecCtx_(NULL), 
@@ -1508,6 +1551,8 @@ ODFfmpegSource::State::State(ODFfmpegSource* parent) :
 	frame_timer = frame_last_delay = frame_last_pts = 0.0;
 
 	frame_timer_start = 0.0;
+
+	video_clock = 0.0;
 
 	quit = false;
 
@@ -1605,7 +1650,8 @@ ODFfmpegSource::~ODFfmpegSource()
 	delete state;
 }
 
-AVDictionary *opts;
+
+//AVDictionary *opts;
 bool ODFfmpegSource::open(const std::string& videoFileName)
 {
 #ifdef VIDEO_DECODING
@@ -1718,10 +1764,14 @@ bool ODFfmpegSource::open(const std::string& videoFileName)
 		// Compute video frame rate.
 		fps_ = (double)(state->videoStream_->r_frame_rate.num) / (double)(state->videoStream_->r_frame_rate.den);
 
+#if 0
+/*
+ * Depreciated
+ */
 		// Use custom memory allocation functions that propagate timestamp info.
 		state->codecCtx_->get_buffer = state->allocateFrame;
 		state->codecCtx_->release_buffer = state->releaseFrame;
-
+#endif
 		// Get image frame dimensions.
 		state->nativeWidth_ = state->codecCtx_->width;
 		state->nativeHeight_ = state->codecCtx_->height;
@@ -1973,11 +2023,19 @@ void ODFfmpegSource::close()
 	//printf("Closing previous video source.\n");
 }
 
-//#include <windows.h>
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////// VIDEO DECODING /////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef VIDEO_DECODING
-////////////////////////////////// DECODING /////////////////////////////////
-#pragma region MEMORY ALLOCATION
+
+#if 0
+/* 
+ * Depreciated
+ */
 ////////////////////////////// MEMORY ALLOCATION /////////////////////////////
+#pragma region MEMORY ALLOCATION
 
 // These custom memory management functions enable us to track current 
 // frame time.
@@ -2010,6 +2068,8 @@ void ODFfmpegSource::State::releaseFrame(AVCodecContext* codecCtx, AVFrame* fram
 	return;
 }
 #pragma endregion
+#endif
+
 #pragma region SYNC
 //////////////////////////////////// SYNC ///////////////////////////////////
 /* Called by advanceFrame() used to correct PTS for the current frame.
@@ -2096,7 +2156,6 @@ int ODFfmpegSource::queue_picture(AVFrame *pFrame, double pts)
 #endif
 
 #if 0
-	videoDone = false;
 	while(!state->quit)
 	{
 		//state->pictqMutex.grab();
@@ -2248,7 +2307,6 @@ int ODFfmpegSource::queue_picture(AVFrame *pFrame, double pts)
 
 	return 0;
 }
-#endif
 
 #if 0
 bool ODFfmpegSource::advanceFrame(int numFrames)
@@ -2507,9 +2565,6 @@ bool ODFfmpegSource::advanceFrame(int numFrames)
 		if(queue_picture(state->nativeFrame_, currentTime_) < 0)
 		{
 			//printf("\nCould not queue PICTURE\n");
-			//WaitForSingleObject(semaphore,INFINITE);
-			//semaphore = CreateSemaphore( NULL, 0 , RINGSIZE, NULL);
-			//ReleaseSemaphore(semaphore, RINGSIZE, NULL );
 			return false;
 			//break;
 
@@ -2520,7 +2575,352 @@ bool ODFfmpegSource::advanceFrame(int numFrames)
 	return true;
 }
 #endif
-#ifdef VIDEO_DECODING
+
+#if 1
+/* Check if audio/video queues are full or if the video is at the end.
+ */
+bool ODFfmpegSource::queuesFull()
+{
+	if(state->audioq.size > MAX_AUDIOQ_SIZE || state->videoq.size > MAX_VIDEOQ_SIZE || atVideoEnd_)
+	{
+		//Sleep(10);
+		return true;
+	}
+	return false;
+}
+
+#pragma region READ_PACKET_ADVANCE_FRAME
+bool ODFfmpegSource::advanceFrame(int numFrames)
+{
+	AVPacket packet;
+	av_init_packet(&packet);
+	packet.data = NULL;
+	packet.size = 0;
+
+	if (state->quit)
+		return false;
+	//if (atVideoEnd_)
+		//Sleep(10);
+		//return false;
+		
+		
+	if(state->seek_req == 1)
+	{
+	#if 1
+			int64_t seek_target = state->seek_pos;
+			int64_t seek_min= state->seek_rel > 0 ? seek_target - state->seek_rel + 2: _I64_MIN/*INT64_MIN*/;
+			int64_t seek_max= state->seek_rel < 0 ? seek_target - state->seek_rel - 2: _I64_MAX/*INT64_MAX*/;
+			//FIXME the +-2 is due to rounding being not done in the correct direction in generation
+			//      of the seek_pos/seek_rel variables
+
+			int ret = avformat_seek_file(state->formatCtx_, -1, seek_min, seek_target, seek_max, state->seek_flags);
+			if(ret < 0)
+			{
+				fprintf(stderr, "%s: error while seeking\n", videoFileName_.c_str());
+			}
+			else
+			{
+				atVideoEnd_ = false;
+	#ifdef AUDIO_DECODING
+				if(state->audioStreamIndex_ >= 0)
+				{
+					audio_packet_queue_flush(&(state->audioq));
+					audio_packet_queue_put(&state->audioq, &flush_pkt);
+					//clearAudioPackets();
+				}
+	#endif
+				if(state->videoStreamIndex_ >= 0)
+				{
+					//packet.data = flush_pkt.data;
+					video_packet_queue_flush(&(state->videoq));
+					vid_packet_queue_put(&state->videoq, &flush_pkt);
+					//clearQueuedFrames();
+					//packet_queue_flush(&state->videoq);
+					//packet_queue_put(&state->videoq, &flush_pkt);
+				}
+			}
+			state->seek_req = 0;
+	#endif
+
+	#if 0
+	/*
+	 * Old way of seeking using 'av_seek_frame'.
+	 */
+
+				int stream_index= -1;
+				int64_t seek_target = state->seek_pos;
+
+				if     (state->videoStreamIndex_ >= 0) stream_index = state->videoStreamIndex_;
+				else if(state->audioStreamIndex_ >= 0) stream_index = state->audioStreamIndex_;
+
+				if(stream_index>=0)
+				{
+					//seek_target= av_rescale_q(seek_target, AV_TIME_BASE_Q, pFormatCtx->streams[stream_index]->time_base);
+					AVRational time = {1, 1000000};
+					seek_target= av_rescale_q(seek_target, time, state->videoStream_->time_base);
+					//seek_target= av_rescale_q(seek_target, time, state->audioStream_->time_base);
+				}
+				//if(!avformat_seek_file(state->pFormatCtx, stream_index, seek_target, state->seek_flags))
+				int res = av_seek_frame(state->formatCtx_, stream_index, seek_target, state->seek_flags);
+				if(res < 0)
+				{
+					fprintf(stderr, "%s: error while seeking\n", videoFileName_.c_str());
+				}
+				else
+				{
+	#ifdef AUDIO_DECODING
+					if(state->audioStreamIndex_ >= 0)
+					{
+						//audio_packet_queue_flush(&(state->audioq));
+						//audio_packet_queue_put(&state->audioq, &flush_pkt);
+						clearAudioPackets();
+					}
+	#endif
+					if(state->videoStreamIndex_ >= 0)
+					{
+						packet.data = flush_pkt.data;
+						clearQueuedFrames();
+						//packet_queue_flush(&state->videoq);
+						//packet_queue_put(&state->videoq, &flush_pkt);
+					}
+				}
+				state->seek_req = 0;
+	#endif
+	}
+
+	int advan = av_read_frame(state->formatCtx_, &packet);
+	if (advan >= 0)
+	{
+#ifdef AUDIO_DECODING
+		if(packet.stream_index==state->audioStreamIndex_)
+		{
+			audio_packet_queue_put(&(state->audioq), &packet);
+		}
+		else if (packet.stream_index == state->videoStreamIndex_)
+#else
+		if (packet.stream_index == state->videoStreamIndex_)
+#endif
+		{
+			vid_packet_queue_put(&(state->videoq), &packet);
+		}
+		else
+			av_free_packet(&packet);
+	}
+	else
+	{
+		if(advan == AVERROR_EOF)
+		{
+			if(!atVideoEnd_)
+			{
+				AVPacket empty_packet;
+				av_init_packet(&empty_packet);
+				for(int i=0; i<state->codecCtx_->thread_count; i++)
+					vid_packet_queue_put(&state->videoq, &empty_packet);
+
+				printf("At the end of the video.\n");
+				atVideoEnd_ = true;
+				vid_packet_queue_put(&state->videoq, &end_pkt);
+			}
+		}
+		char errbuf[128];
+		av_strerror(advan, errbuf, 128);
+		//if(url_ferror(state->formatCtx_->pb) == 0)
+		if (state->formatCtx_->pb && state->formatCtx_->pb->error)
+		{
+			return false;
+			//Sleep(10); /* no error; wait for user input */
+		}
+		else
+			return true;
+	}
+
+	return true;
+}
+#pragma endregion
+
+#pragma region DECODE_VIDEO_FRAME
+int ODFfmpegSource::decodeVideoFrame()
+{
+    //if (atVideoEnd_)
+	//	return false;
+
+	//if (atVideoEnd_)// && decoderReachedEnd)
+	//{
+	//	Sleep(10);
+	//	return true;
+	//}
+
+	double pts = 0;
+ 
+	// Read uncompressed video data one packet at a time, filling up
+	// the frame buffer as we go, until we finish a frame.
+	int frameFinished = 0;
+	AVPacket packet;
+
+	while (!frameFinished)
+	{
+		int qRet = vid_packet_queue_get(&(state->videoq), &packet);
+		if(qRet < 0) //
+		{
+			//return -1;
+			return false;
+			//continue;
+		}
+		//else if (qRet == 0) //Return -1 to signal that the queue is currently empty and that the calling thread should sleep.
+		//{
+		//	//Sleep(10);
+		//	return -1;
+		//	//printf("videoq pkq NULL - queue empty\n");
+		//	//continue;
+		//}
+		if(packet.data == flush_pkt.data) {
+			printf("Videoq pkq = FLUSH\n");
+			clearQueuedFrames();
+			avcodec_flush_buffers(state->codecCtx_);
+			//continue;
+			//av_free_packet(&packet);
+			return true;
+		}
+
+		if(packet.data == end_pkt.data) {
+			printf("Videoq pkq = END\n");
+
+			//decoderReachedEnd = true;
+			//return true;
+
+			//clearQueuedFrames();
+			//avcodec_flush_buffers(state->codecCtx_);
+
+#ifdef USE_ODBASE
+				state->pictqMutex.grab();
+#else
+				WaitForSingleObject(state->pictqMutex, INFINITE);
+#endif
+				while(state->pictq_size != 0 || !state->quit)
+				//while(/*state->pictq_size != 0 && */!state->quit)
+				{
+					//printf("Waiting for video queue to empty - size: %d.\n", state->pictq_size);
+#ifdef USE_ODBASE
+					state->pictqMutex.release();
+#else
+					ReleaseMutex(state->pictqMutex);
+#endif
+					Sleep(10);
+#ifdef USE_ODBASE
+					state->pictqMutex.grab();
+#else
+					WaitForSingleObject(state->pictqMutex, INFINITE);
+#endif				
+				}
+#ifdef USE_ODBASE
+				state->pictqMutex.release();
+#else
+				ReleaseMutex(state->pictqMutex);
+#endif
+				state->quit = true;
+				printf("Quitting video--->.\n");
+
+			return false;
+		}
+#if 0
+	/*
+	 * Use of the global opaque pts is depreciated
+	 * https://github.com/FFmpeg/FFmpeg/commits/master/ffplay.c?page=14
+	 */		
+		ODFfmpegSource::State::GlobalLastPresentationTime_ = packet.pts;
+#endif
+		
+		avcodec_get_frame_defaults(state->nativeFrame_);
+		/*int retVal = avcodec_decode_video(state->codecCtx_, state->nativeFrame_, &frameFinished,packet.data, packet.size);*/
+		int retVal = avcodec_decode_video2(state->codecCtx_, state->nativeFrame_, &frameFinished, &packet);
+
+#if 0 /*
+	   * Depreciated - Returns incorrect pts
+	   */
+
+		SINT64 newTimestamp = (SINT64)ODFfmpegSource::UnknownTime;
+		if ((packet.dts == (SINT64)AV_NOPTS_VALUE) && state->nativeFrame_->opaque && 
+			(*((SINT64*)(state->nativeFrame_->opaque)) != (SINT64)AV_NOPTS_VALUE))
+			newTimestamp = *((SINT64*)(state->nativeFrame_->opaque));
+		else if (packet.dts != (SINT64)AV_NOPTS_VALUE)
+			newTimestamp = packet.dts;
+		if (newTimestamp == ODFfmpegSource::UnknownTime)
+			//currentTime_ = ODFfmpegSource::UnknownTime;
+			pts = ODFfmpegSource::UnknownTime;
+		else
+			//currentTime_ = (double)newTimestamp * av_q2d(state->videoStream_->time_base);
+			pts = (double)newTimestamp * av_q2d(state->videoStream_->time_base);
+
+		//currentTime_ = currentTime_ - ((state->codecCtx_->thread_count-1) * 1.0 / fps_); // To compensate for 'FF_THREAD_FRAME'  - from avcodec.h - Use of FF_THREAD_FRAME will increase decoding delay by one frame per thread
+		//if(currFrameIndex_ < int(fps_ * duration_)-(state->codecCtx_->thread_count-1))
+		//	pts = pts - ((state->codecCtx_->thread_count-1) * 1.0 / fps_); // To compensate for 'FF_THREAD_FRAME'  - from avcodec.h - Use of FF_THREAD_FRAME will increase decoding delay by one frame per thread
+#endif
+
+#if 1
+		
+/*
+ * Implement guessed_pts in avcodec_decode_video2
+ *
+ * https://github.com/FFmpeg/FFmpeg/commit/76ad67cae751658ce2d84e83b38a4d673e9e85a3#diff-4c4dde3d6374f55205ebd0533c96cf24
+ */
+
+		//static int decoder_reorder_pts = -1;
+		//if (decoder_reorder_pts == -1) {
+		//if (state->nativeFrame_->best_effort_timestamp != 0 || state->nativeFrame_->best_effort_timestamp  != (SINT64)AV_NOPTS_VALUE) {
+		if (state->nativeFrame_->best_effort_timestamp > 0 && state->nativeFrame_->best_effort_timestamp  != (SINT64)AV_NOPTS_VALUE) {
+			pts = state->nativeFrame_->best_effort_timestamp;
+			//currentTime_ = av_frame_get_best_effort_timestamp(state->nativeFrame_);
+		//} else if (decoder_reorder_pts) {
+		} else if (state->nativeFrame_->pkt_pts != 0 || state->nativeFrame_->pkt_pts != (SINT64)AV_NOPTS_VALUE) {
+			pts = state->nativeFrame_->pkt_pts;
+			//currentTime_ = state->nativeFrame_->pts;
+		} else {
+			pts = state->nativeFrame_->pkt_dts;
+		}
+
+		if (pts == AV_NOPTS_VALUE || pts < 0) {
+			pts = 0;
+		}
+		pts *= av_q2d(state->videoStream_->time_base);
+#endif
+		//printf("pts: %f\n", pts);
+		av_free_packet(&packet);
+	}
+
+	// Did we get a video frame?
+	if(frameFinished)
+	{
+		// Update frame index.
+		currFrameIndex_++;
+		//printf("pts: %f - currFrameIndex_: %d\n", pts, currFrameIndex_);
+		//pts = synchronize_video(state->nativeFrame_, currentTime_);
+
+
+/*
+ * https://github.com/FFmpeg/FFmpeg/commit/5534d8f75e271743d954886409c39e3386e9e48d#diff-4c4dde3d6374f55205ebd0533c96cf24
+ *
+ * We are now using a pts based approach, libavutil/libavcodec should provide the
+ * correct pts-es anyway. This also fixes an issue when seeking to a frame with a
+ * pts set to zero.
+ */
+#if 0
+		pts = synchronize_video(pts);
+#endif
+		//if(queue_picture(state->rawFrame_, pts) < 0)
+		if(queue_picture(state->nativeFrame_, pts) < 0)
+		{
+			printf("\nCould not queue PICTURE\n");
+			return false;
+			//break;
+		}
+	}
+	//av_free(state->nativeFrame_);
+
+	return true;
+}
+#pragma endregion
+#endif
+
 #pragma region SEEK
 void ODFfmpegSource::stream_seek(int64_t pos, int rel)
 {
@@ -2543,8 +2943,8 @@ void ODFfmpegSource::stream_seek(int64_t pos, int rel)
 	}
 }
 
-void ODFfmpegSource::seek(double clock, double incr)
 //void ODFfmpegSource::seek(double incr)
+void ODFfmpegSource::seek(double clock, double incr)
 {
 	double pos;
 	pos = clock;
@@ -2626,6 +3026,7 @@ void ODFfmpegSource::clearQueuedFrames()
 	}
 }
 #endif
+
 #ifdef AUDIO_DECODING
 /* Clears any remaining audio packets from the queue and flushes the codec buffers.
  */
@@ -2666,7 +3067,7 @@ void ODFfmpegSource::clearAudioPackets()
 #endif
 }
 #endif
-#if 1
+
 //bool ODFfmpegSource::getCurrFrame(IplImage** imPtr)
 //{
 //    // (Re)allocate image data pointer if necessary.
@@ -2678,318 +3079,3 @@ void ODFfmpegSource::clearAudioPackets()
 //
 //    return true;
 //}
-bool ODFfmpegSource::queuesFull()
-{
-	if(state->audioq.size > MAX_AUDIOQ_SIZE || state->videoq.size > MAX_VIDEOQ_SIZE || atVideoEnd_)
-	{
-		//Sleep(10);
-		return true;
-	}
-	return false;
-}
-
-bool ODFfmpegSource::advanceFrame(int numFrames)
-{
-	AVPacket packet;
-	av_init_packet(&packet);
-	packet.data = NULL;
-	packet.size = 0;
-
-	if (state->quit)
-		return false;
-  //  if (atVideoEnd_)
-		//Sleep(10);
-		//return false;
-		
-		
-		if(state->seek_req == 1)
-		{
-#if 1
-			int64_t seek_target = state->seek_pos;
-			int64_t seek_min= state->seek_rel > 0 ? seek_target - state->seek_rel + 2: _I64_MIN/*INT64_MIN*/;
-			int64_t seek_max= state->seek_rel < 0 ? seek_target - state->seek_rel - 2: _I64_MAX/*INT64_MAX*/;
-			//FIXME the +-2 is due to rounding being not done in the correct direction in generation
-			//      of the seek_pos/seek_rel variables
-
-			int ret = avformat_seek_file(state->formatCtx_, -1, seek_min, seek_target, seek_max, state->seek_flags);
-			if(ret < 0)
-			{
-				fprintf(stderr, "%s: error while seeking\n", videoFileName_.c_str());
-			}
-			else
-			{
-				atVideoEnd_ = false;
-#ifdef AUDIO_DECODING
-				if(state->audioStreamIndex_ >= 0)
-				{
-					audio_packet_queue_flush(&(state->audioq));
-					audio_packet_queue_put(&state->audioq, &flush_pkt);
-					//clearAudioPackets();
-				}
-#endif
-				if(state->videoStreamIndex_ >= 0)
-				{
-					//packet.data = flush_pkt.data;
-					video_packet_queue_flush(&(state->videoq));
-					vid_packet_queue_put(&state->videoq, &flush_pkt);
-					//clearQueuedFrames();
-					//packet_queue_flush(&state->videoq);
-					//packet_queue_put(&state->videoq, &flush_pkt);
-				}
-			}
-			state->seek_req = 0;
-#endif
-#if 0
-				int stream_index= -1;
-				int64_t seek_target = state->seek_pos;
-
-				if     (state->videoStreamIndex_ >= 0) stream_index = state->videoStreamIndex_;
-				else if(state->audioStreamIndex_ >= 0) stream_index = state->audioStreamIndex_;
-				//if(state->audioStreamIndex_ >= 0) stream_index = state->audioStreamIndex_;
-
-				if(stream_index>=0)
-				{
-					//seek_target= av_rescale_q(seek_target, AV_TIME_BASE_Q, pFormatCtx->streams[stream_index]->time_base);
-					AVRational time = {1, 1000000};
-					seek_target= av_rescale_q(seek_target, time, state->videoStream_->time_base);
-					//seek_target= av_rescale_q(seek_target, time, state->audioStream_->time_base);
-				}
-				//if(!avformat_seek_file(state->pFormatCtx, stream_index, seek_target, state->seek_flags))
-				int res = av_seek_frame(state->formatCtx_, stream_index, seek_target, state->seek_flags);
-				if(res < 0)
-				{
-					fprintf(stderr, "%s: error while seeking\n", videoFileName_.c_str());
-				}
-				else
-				{
-#ifdef AUDIO_DECODING
-					if(state->audioStreamIndex_ >= 0)
-					{
-						//audio_packet_queue_flush(&(state->audioq));
-						//audio_packet_queue_put(&state->audioq, &flush_pkt);
-						clearAudioPackets();
-					}
-#endif
-					if(state->videoStreamIndex_ >= 0)
-					{
-						packet.data = flush_pkt.data;
-						clearQueuedFrames();
-						//packet_queue_flush(&state->videoq);
-						//packet_queue_put(&state->videoq, &flush_pkt);
-					}
-				}
-				state->seek_req = 0;
-#endif
-		}
-
-	//if(state->audioq.size > MAX_AUDIOQ_SIZE || state->videoq.size > MAX_VIDEOQ_SIZE)
-	//{
-	//	//Sleep(10);
-	//	return true;
-	//}
-
-	int advan = av_read_frame(state->formatCtx_, &packet);
-	if (advan >= 0)
-	{
-#ifdef AUDIO_DECODING
-		if(packet.stream_index==state->audioStreamIndex_)
-		{
-			audio_packet_queue_put(&(state->audioq), &packet);
-		}
-		else if (packet.stream_index == state->videoStreamIndex_)
-#else
-		if (packet.stream_index == state->videoStreamIndex_)
-#endif
-		{
-			vid_packet_queue_put(&(state->videoq), &packet);
-		}
-		else
-			av_free_packet(&packet);
-	}
-	else
-	{
-		if(advan == AVERROR_EOF)
-		{
-			if(!atVideoEnd_)
-			{
-				AVPacket empty_packet;
-				av_init_packet(&empty_packet);
-				for(int i=0; i<state->codecCtx_->thread_count; i++)
-					vid_packet_queue_put(&state->videoq, &empty_packet);
-
-				printf("At the end of the video.\n");
-				atVideoEnd_ = true;
-				vid_packet_queue_put(&state->videoq, &end_pkt);
-			}
-		}
-		char errbuf[128];
-		av_strerror(advan, errbuf, 128);
-		//if(url_ferror(state->formatCtx_->pb) == 0)
-		if (state->formatCtx_->pb && state->formatCtx_->pb->error)
-		{
-			return false;
-			//Sleep(10); /* no error; wait for user input */
-		}
-		else
-			return true;
-	}
-
-	return true;
-}
-bool reachedEnd = false;
-int ODFfmpegSource::decodeVideoFrame()
-{
-    //if (atVideoEnd_)
-	//	return false;
-
-    if (atVideoEnd_ && reachedEnd)
-	{
-		Sleep(10);
-		return true;
-	}
-
-	double pts = 0;
- 
-	// Read uncompressed video data one packet at a time, filling up
-	// the frame buffer as we go, until we finish a frame.
-	int frameFinished = 0;
-	AVPacket packet;
-
-	while (!frameFinished)
-	{
-		int qRet = vid_packet_queue_get(&(state->videoq), &packet);
-		if(qRet < 0) //
-		{
-			//return -1;
-			return false;
-			//continue;
-		}
-		//else if (qRet == 0) //Return -1 to signal that the queue is currently empty and that the calling thread should sleep.
-		//{
-		//	//Sleep(10);
-		//	return -1;
-		//	//printf("videoq pkq NULL - queue empty\n");
-		//	//continue;
-		//}
-		if(packet.data == flush_pkt.data) {
-			printf("Videoq pkq = FLUSH\n");
-			clearQueuedFrames();
-			avcodec_flush_buffers(state->codecCtx_);
-			//continue;
-			//av_free_packet(&packet);
-			return true;
-		}
-
-		if(packet.data == end_pkt.data) {
-			printf("Videoq pkq = END\n");
-
-			reachedEnd = true;
-			return true;
-			//clearQueuedFrames();
-			//avcodec_flush_buffers(state->codecCtx_);
-
-#ifdef USE_ODBASE
-				state->pictqMutex.grab();
-#else
-				WaitForSingleObject(state->pictqMutex, INFINITE);
-#endif
-				while(/*state->pictq_size != 0 &&*/ !state->quit)
-				{
-					printf("Waiting for video queue to empty.\n");
-#ifdef USE_ODBASE
-					state->pictqMutex.release();
-#else
-					ReleaseMutex(state->pictqMutex);
-#endif
-					Sleep(10);
-#ifdef USE_ODBASE
-					state->pictqMutex.grab();
-#else
-					WaitForSingleObject(state->pictqMutex, INFINITE);
-#endif				
-				}
-#ifdef USE_ODBASE
-				state->pictqMutex.release();
-#else
-				ReleaseMutex(state->pictqMutex);
-#endif
-				state->quit = true;
-
-			return false;
-		}
-		
-		ODFfmpegSource::State::GlobalLastPresentationTime_ = packet.pts;
-		
-		avcodec_get_frame_defaults(state->nativeFrame_);
-		/*int retVal = avcodec_decode_video(state->codecCtx_, state->nativeFrame_, &frameFinished,packet.data, packet.size);*/
-		int retVal = avcodec_decode_video2(state->codecCtx_, state->nativeFrame_, &frameFinished, &packet);
-
-#if 0 // Returns incorrect pts
-		SINT64 newTimestamp = (SINT64)ODFfmpegSource::UnknownTime;
-		if ((packet.dts == (SINT64)AV_NOPTS_VALUE) && state->nativeFrame_->opaque && 
-			(*((SINT64*)(state->nativeFrame_->opaque)) != (SINT64)AV_NOPTS_VALUE))
-			newTimestamp = *((SINT64*)(state->nativeFrame_->opaque));
-		else if (packet.dts != (SINT64)AV_NOPTS_VALUE)
-			newTimestamp = packet.dts;
-		if (newTimestamp == ODFfmpegSource::UnknownTime)
-			//currentTime_ = ODFfmpegSource::UnknownTime;
-			pts = ODFfmpegSource::UnknownTime;
-		else
-			//currentTime_ = (double)newTimestamp * av_q2d(state->videoStream_->time_base);
-			pts = (double)newTimestamp * av_q2d(state->videoStream_->time_base);
-#endif
-		//currentTime_ = currentTime_ - ((state->codecCtx_->thread_count-1) * 1.0 / fps_); // To compensate for 'FF_THREAD_FRAME'  - from avcodec.h - Use of FF_THREAD_FRAME will increase decoding delay by one frame per thread
-		//if(currFrameIndex_ < int(fps_ * duration_)-(state->codecCtx_->thread_count-1))
-		//	pts = pts - ((state->codecCtx_->thread_count-1) * 1.0 / fps_); // To compensate for 'FF_THREAD_FRAME'  - from avcodec.h - Use of FF_THREAD_FRAME will increase decoding delay by one frame per thread
-
-#if 1
-		//static int decoder_reorder_pts = -1;
-		//if (decoder_reorder_pts == -1) {
-		//if (state->nativeFrame_->best_effort_timestamp != 0 || state->nativeFrame_->best_effort_timestamp  != (SINT64)AV_NOPTS_VALUE) {
-		if (state->nativeFrame_->best_effort_timestamp > 0 && state->nativeFrame_->best_effort_timestamp  != (SINT64)AV_NOPTS_VALUE) {
-			pts = state->nativeFrame_->best_effort_timestamp;
-			//currentTime_ = av_frame_get_best_effort_timestamp(state->nativeFrame_);
-		//} else if (decoder_reorder_pts) {
-		} else if (state->nativeFrame_->pkt_pts != 0 || state->nativeFrame_->pkt_pts != (SINT64)AV_NOPTS_VALUE) {
-			pts = state->nativeFrame_->pkt_pts;
-			//currentTime_ = state->nativeFrame_->pts;
-		} else {
-			pts = state->nativeFrame_->pkt_dts;
-		}
-
-		if (pts == AV_NOPTS_VALUE) {
-			pts = 0;
-		}
-		pts *= av_q2d(state->videoStream_->time_base);
-#endif
-		//printf("pts: %f\n", pts);
-		av_free_packet(&packet);
-	}
-
-	// Did we get a video frame?
-	if(frameFinished)
-	{
-		// Update frame index.
-		currFrameIndex_++;
-		printf("pts: %f - currFrameIndex_: %d\n", pts, currFrameIndex_);
-		//pts = synchronize_video(state->nativeFrame_, currentTime_);
-		pts = synchronize_video(pts);
-		//if(queue_picture(state->rawFrame_, pts) < 0)
-		//if(queue_picture(state->nativeFrame_, pts) < 0)
-		if(queue_picture(state->nativeFrame_, pts) < 0)
-		{
-			printf("\nCould not queue PICTURE\n");
-			//WaitForSingleObject(semaphore,INFINITE);
-			//semaphore = CreateSemaphore( NULL, 0 , RINGSIZE, NULL);
-			//ReleaseSemaphore(semaphore, RINGSIZE, NULL );
-			//Sleep(1000);
-			return false;
-			//break;
-
-		}
-	}
-	//av_free(state->nativeFrame_);
-
-	return true;
-}
-#endif

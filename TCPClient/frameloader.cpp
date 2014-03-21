@@ -1018,13 +1018,32 @@ void decodeAndPlayAllAudioStreams(void* dummy)
 									//}
 									//videoStreamLock[i].release();
 
-											if(!openALEnv->isSourceStillPlaying(i))
-											{
-												closeVideoThread(i);
-												closeAudioStream(i);
+									bool atEnd = false;
+#ifdef USE_ODBASE
+									videoStreamLock[i].grab();
+#else
+									WaitForSingleObject(videoStreamLock[i], INFINITE);
+#endif
+									if(videoSources[i] != NULL)
+										if(videoSources[i]->atVideoEnd_)
+											atEnd = true;
+#ifdef USE_ODBASE
+									videoStreamLock[i].release();
+#else
+									ReleaseMutex(videoStreamLock[i]);
+#endif
 
-												//stopOrRestartVideo(i);
-											}
+									if(!openALEnv->isSourceStillPlaying(i))
+									{
+										if(atEnd)
+										{
+										printf("Audio thread is no longer playing--->\n");
+										closeVideoThread(i);
+										closeAudioStream(i);
+										}
+
+										//stopOrRestartVideo(i);
+									}
 								}
 //#ifndef PRELOAD
 								//free(data);

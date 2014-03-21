@@ -20,13 +20,12 @@ extern int _clientSenderID;
 
 #include "pbo.h"
 
-//bool	frameReady[MAXSTREAMS];
-//bool	frameDisplayed[MAXSTREAMS] = {true, true, true, true};
-
+#ifdef NETWORKED_AUDIO
 #ifdef USE_ODBASE
 ODBase::Lock	commandMutex;
 #else
-HANDLE commandMutex;
+HANDLE			commandMutex;
+#endif
 #endif
 
 enum {ffs = 1, ffmpeg}; // 1 = ffs, 2 = ffmpeg
@@ -208,15 +207,14 @@ int videoCallback(int side, int delayms)
 
 void initVideoAudioPlayback(char *serverIP, int TCPPort, int UDPPort, int ClientID, int side, char* fileName, bool autostart, bool testLatency)
 {
-#ifndef USE_ODBASE
-	commandMutex = CreateMutex(NULL, false, NULL);
-#endif
-
 #ifdef NETWORKED_AUDIO
 	_clientSenderID = ClientID;
 	initNetSync(serverIP, TCPPort, UDPPort, ClientID, side, testLatency);
-	//_beginthread(syncThread, 0, 0);
 	printf("\n////////////////////////////////////////\n");
+
+	#ifndef USE_ODBASE
+		commandMutex = CreateMutex(NULL, false, NULL);
+	#endif
 #endif
 
 	if(enablePBOs)
@@ -433,9 +431,9 @@ void updateffs()
 
 #endif
 
-#ifdef VIDEO_PLAYBACK
 ////////////////////////////////////////////// VIDEO PLAYBACK ////////////////////////////////////////////////
 
+#ifdef VIDEO_PLAYBACK
 bool loadVideo(const char* path, int videounit)
 {
 	if (loadVideoFrames(path, duration[videounit], fps[videounit], inwidth[videounit], inheight[videounit], videounit) == false) 
@@ -731,7 +729,7 @@ void checkMessages()
 	}
 }
 #endif
-//#ifdef NETWORKED_AUDIO
+
 #ifdef NETWORKED_AUDIO
 enum {nstop, nload, npause, nseek};
 
@@ -898,6 +896,8 @@ void checkMessages()
 #endif
 #endif
 
+/* Stops the current video, loads specified video and begins playback.
+ */
 void screenSyncLoadVideo(string videoName, int videounit)
 {
 	if(screenSync)
@@ -1163,7 +1163,7 @@ void updateVideo()
 					if(enablePBOs)
 						//nextFrameDelay[i] = getNextVideoFramePbo(newClock, totalPauseLength[i], i, rawRGBData[i]);
 						//nextFrameDelay[i] = getNextVideoFramePbo(newClock, totalPauseLength[i], i, rawRGBData[i], pboPTS[i]);
-						nextFrameDelay[i] = getNextVideoFramePbo(newClock, totalPauseLength[i], i, rawRGBData[i], pboPTS[qindex[i]]);
+						nextFrameDelay[i] = getNextVideoFramePbo(newClock, totalPauseLength[i], i, rawRGBData[i], pbosSize(i) > -1.0 ? pboPTS[qindex[i]] : 0);
 					else
 						nextFrameDelay[i] = getNextVideoFrame(newClock, totalPauseLength[i], i, rawRGBData[i]);
 					//printf("CpyTime:\t %f\n", getGlobalVideoTimer(i) - profileCopyTime);	
@@ -1180,8 +1180,8 @@ void updateVideo()
 #ifdef LOG
 					fprintf(videoDebugLogFile, "-NEXT_FRAME_DELAY[%d]: %f(ms)\n", i, nextFrameDelay[i]);
 #endif
-					//if(enableDebugOutput)
-						//fprintf(stdout, "-NEXT_FRAME_DELAY[%d]: %f(ms)\n", i, nextFrameDelay[i]);
+					if(enableDebugOutput)
+						fprintf(stdout, "-NEXT_FRAME_DELAY[%d]: %f(ms)\n", i, nextFrameDelay[i]);
 		
 					double profileTime = getGlobalVideoTimer(i);
 					glBindTexture(GL_TEXTURE_2D, videotextures[i]);
@@ -1194,6 +1194,7 @@ void updateVideo()
 						//memset(rawRGBData[i], 128, sizeof(char) * inwidth[i] * inheight[i] * 4);
 						if(enablePBOs)
 							drawPBO(i);
+							//drawPBO(i, -1);
 						else
 						{
 							if( rawRGBData[i] != NULL)
@@ -1220,7 +1221,7 @@ void updateVideo()
 					else if (nextFrameDelay[i] == -1)
 					{
 						nextFrameDelay[i] = 0.0;
-						//printf("<<<Stop drawing video[%d]: pictq_size = 0\n", i);
+						printf("<<<Stop drawing video[%d]: pictq_size = 0\n", i);
 						//Sleep(10);
 
 						//memset(rawRGBData[i], 0, sizeof(char) * inwidth[i] * inheight[i] * 4);
@@ -1346,12 +1347,29 @@ void updateVideo()
 	//glFlush();
 	//glFinish();
 
+	GLenum err = glGetError();
+	if(err != GL_NO_ERROR)
+	{
+		printf("UpdateVideo GL err - %s.\n", gluErrorString(err));
+		printf("OpenGL Error: %s (0x%x), @\n", glGetString(err), err);
+	}
+
 #endif
 	//printf("totTime:\t %f\n", getGlobalVideoTimer(0) - totTime);
 }
 
 #ifdef MULTI_TIMER
-void updateVideoCallback(void* arg)
+//int drawQCount = 0;
+
+#if 0
+#ifdef USE_ODBASE
+	ODBase::Lock drawMutex("drawMutex");
+#else
+	HANDLE drawMutex;
+#endif
+#endif
+
+void SupdateVideoCallback(void* arg)
 //void updateVideoCallback()
 {
 #ifdef MULTI_TIMER
@@ -1389,6 +1407,7 @@ void updateVideoCallback(void* arg)
 					//double timeDif = getGlobalVideoTimer(i) - preTime[i];
 					//if(timeDif >= nextFrameDelay[i])
 					{
+#if 0
 						currGlobalTimer[i] = getGlobalVideoTimer(i) / (double)1000;
 						currGlobalTimer[i] -= totalPauseLength[i];
 						//updatePBOs(i);
@@ -1434,7 +1453,8 @@ void updateVideoCallback(void* arg)
 							preClock[i] = openALAudioClock;
 							diff[i] = (openALAudioClock-currGlobalTimer[i]);
 						}
-	#endif
+	#endif			
+#endif
 						double newClock = currGlobalTimer[i] + diff[i];
 						newClock = newClock + g_Delay[i];
 
@@ -1461,10 +1481,11 @@ void updateVideoCallback(void* arg)
 	//							currGlobalTimer[i], diff[i] + g_Delay[i], i, newClock);
 	//	#endif
 	//#endif
-	#ifdef NETWORKED_AUDIO
+	
+#ifdef NETWORKED_AUDIO
 						if(enableDebugOutput)
 							//#ifdef DEBUG_PRINTF
-								fprintf(stdout, "\rNET_AUDIO_CLOCK[%d]: %019.16f(s)-GlobalVideoTimer[%d]: %f(s)-Diff: %09.6f(s)-GEN_AUDIO_CLOCK[%d]: %019.16f(s)", i, udpAudioClock, i, 
+								fprintf(stdout, "\rNET_AUDIO_CLOCK[%d]: %019.16f(s)-GlobalVideoTimer[%d]: %f(s)-Diff: %09.6f(s)-GEN_AUDIO_CLOCK[%d]: %019.16f(s)", i, g_netAudioClock[i], i, 
 									currGlobalTimer[i], diff[i] + g_Delay[i], i, newClock);
 							//#endif
 	#endif
@@ -1485,29 +1506,49 @@ void updateVideoCallback(void* arg)
 						//		printf("-frameTimeDif: %09.6f", frameTimeDiff);
 						//#endif
 						//memset(rawRGBData[i], 128, sizeof(char) * inwidth[i] * inheight[i] * 4);
-						pts[i] = getVideoPts(i);
-	#ifdef NETWORKED_AUDIO
-						newClock = netAudioClock[i];
-	#endif
+						
+						//pts[i] = getVideoPts(i);
+
+	//#ifdef NETWORKED_AUDIO
+	//					newClock = netAudioClock[i];
+	//#endif
 						//newClock += (frameTimeDiff / (double)1000);
 						//double profileCopyTime = getGlobalVideoTimer(i);
 
-						//if(!frameDisplayed[i])
-						//{
-						//	//nextFrameDelay[i] = 0;
-						//	printf("***Frame not finished drawing[%d]\n", i);
-						//	continue;
-						//}
+#if 0
+#ifdef USE_ODBASE
+		drawMutex.grab();
+#else
+		WaitForSingleObject(drawMutex, INFINITE);
+#endif
+							int size = drawQCount;
+#ifdef USE_ODBASE
+		drawMutex.release();
+#else
+		ReleaseMutex(drawMutex);
+#endif
+							if(size == 5)
+							{
+								//Sleep(10);
+								nextFrameDelay[i] = 10.0;
+								videoCallback(i, (int)nextFrameDelay[i]);
+								continue;
+							}
+#endif
 
 
 						if(enablePBOs)
+						{
 							//nextFrameDelay[i] = getNextVideoFramePbo(newClock, totalPauseLength[i], i, rawRGBData[i]);
-							nextFrameDelay[i] = getNextVideoFramePbo(newClock, totalPauseLength[i], i, rawRGBData[i], pboPTS[qindex[i]]);
+
+							//int pboPts = pbosSize(i) > 0 ? pboPTS[qindex[i]] : -1;
+							int pboPts = pboPTS[qindex[i]];
+							nextFrameDelay[i] = getNextVideoFramePbo(newClock, totalPauseLength[i], i, rawRGBData[i], pboPts);
+						}
 						else
 							nextFrameDelay[i] = getNextVideoFrame(newClock, totalPauseLength[i], i, rawRGBData[i]);
 
-						//frameDisplayed[i] = false;
-						//frameReady[i] = true;
+						//printf("pbosSize[%d]: %d - drawQCount: %d - pts[%d]: %f, qindex[%d]: %d - pbopts: %f\n", i, pbosSize(i), drawQCount, i, pts[i], i, qindex[i], pboPTS[qindex[i]]);
 
 						//printf("CpyTime:\t %f\n", getGlobalVideoTimer(i) - profileCopyTime);	
 	#ifdef LOG
@@ -1518,7 +1559,7 @@ void updateVideoCallback(void* arg)
 			
 						double profileTime = getGlobalVideoTimer(i);
 						//glBindTexture(GL_TEXTURE_2D, videotextures[i]);
-						if(nextFrameDelay[i] > 0)
+						if(nextFrameDelay[i] > 0)// && /*!pbosEmpty(i)*/ size < pbosSize(i))
 						{
 							//printf("\tDisplay Video frame: %d\n", i);
 							//memset(plainData, 128, sizeof(char) * inwidth[i] * inheight[i] * 3);
@@ -1544,20 +1585,43 @@ void updateVideoCallback(void* arg)
 								}
 							}
 	#endif
+#if 0
+							//nextFrameDelay[i] = -1;
+							//drawQCount = (drawQCount + 1) % 5;
 
-							videoCallback(i, (int)nextFrameDelay[i]);
+#ifdef USE_ODBASE
+		drawMutex.grab();
+#else
+		WaitForSingleObject(drawMutex, INFINITE);
+#endif
+							//if(drawQCount == 5)
+							//{
+							//	//Sleep(10);
+							//	//nextFrameDelay[i] = 10.0;
+							//	continue;
+							//}
+							//else
+								drawQCount++;
+#ifdef USE_ODBASE
+		drawMutex.release();
+#else
+		ReleaseMutex(drawMutex);
+#endif
+#endif
+						//printf("***NOW drawing[%d]: drawQCount_size = 0\n", i, drawQCount);
+							videoCallback(i, nextFrameDelay[i]);
 						}
 						else if (nextFrameDelay[i] == -1)
 						{
-							nextFrameDelay[i] = 1;
+							nextFrameDelay[i] = -1;
 							printf("***Stop drawing[%d]: pictq_size = 0\n", i);
 
 							//memset(rawRGBData[i], 0, sizeof(char) * inwidth[i] * inheight[i] * 4);
 							//glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA/*GL_RGB*/, inwidth[i], inheight[i], 0, GL_RGBA/*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
 							//glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, inwidth[i], inheight[i], GL_RGBA/*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
 
-							//videoCallback(i, (int)10);
-							Sleep(10);
+							videoCallback(i, (int)10);
+							//Sleep(10);
 						}
 						else if (nextFrameDelay[i] == -100)
 						{
@@ -1568,7 +1632,7 @@ void updateVideoCallback(void* arg)
 						else if (nextFrameDelay[i] == -50)
 						{
 							nextFrameDelay[i] = -50;
-							//printf("Stop drawing video[%d]: at video end.\n", i);
+							printf("Stop drawing video[%d]: at video end.\n", i);
 
 							videoCallback(i, (int)10);
 							//totalActiveVideos--;
@@ -1636,7 +1700,7 @@ void updateVideoCallback(void* arg)
 	//printf("totTime:\t %f\n", getGlobalVideoTimer(0) - totTime);
 }
 
-void updateVideoDraw()
+void SupdateVideoDraw()
 {
 #ifdef NETWORKED_AUDIO
 	checkMessages();
@@ -1652,10 +1716,14 @@ void updateVideoDraw()
 				if(enablePBOs)
 					updatePBOs(i);
 
-#if 0
+#if 1
 						currGlobalTimer[i] = getGlobalVideoTimer(i) / (double)1000;
 						currGlobalTimer[i] -= totalPauseLength[i];
 						//updatePBOs(i);
+#endif
+
+#if 1
+	#ifdef NETWORKED_AUDIO
 						double udpAudioClock = netAudioClock[i];
 						g_netAudioClock[i] = udpAudioClock;
 						if(preClock[i] == udpAudioClock)
@@ -1668,15 +1736,91 @@ void updateVideoDraw()
 							preClock[i] = udpAudioClock;
 							diff[i] = (udpAudioClock-currGlobalTimer[i]);// + g_Delay[i];
 						}
+	#elif LOCAL_AUDIO
+						double openALAudioClock = getOpenALAudioClock(i);
+						double ffmpegClock = getFFmpegClock(i);
+						g_netAudioClock[i] = openALAudioClock;
+
+						static double lClockDiff[MAXSTREAMS] = {0};
+						double lcDiff = openALAudioClock - ffmpegClock;
+						if(fabs(lcDiff) < 1.0)
+							lClockDiff[i] = lcDiff;
+						else
+						{
+							//openALAudioClock = ffmpegClock + lClockDiff[i];
+							openALAudioClock = openALAudioClock - (lcDiff) + lClockDiff[i];
+						}
+						//double openALAudioClock = (getOpenALAudioClock(i) > 0) ? getOpenALAudioClock(i) : currGlobalTimer[i];
+						//printf("-lClockDiff[%d]: %f(s) - openALAudioClock[%d]: %f(s) - ffmpegClock[%d]: %f(s) - Diff[%d]: %f(s)\n", i, lClockDiff[i], i, openALAudioClock, i, ffmpegClock, i, lcDiff);
+						openALAudioClock = ffmpegClock;
+						if(enableDebugOutput)
+							fprintf(stdout, "\rOAL_AUDIO_CLOCK[%d]: %09.4f(s)-ffmpegClock[%d]: %09.4f(s)", i, openALAudioClock, i, ffmpegClock);
+						if(preClock[i] == openALAudioClock)
+						{
+							openALAudioClock = -1;
+						}
+						else if(openALAudioClock >= 0)
+						//if(openALAudioClock >= 0)
+						{
+							preClock[i] = openALAudioClock;
+							diff[i] = (openALAudioClock-currGlobalTimer[i]);
+						}
+	#endif
 #endif
+				pts[i] = getVideoPts(i);
+
+#if 0
+#ifdef USE_ODBASE
+		drawMutex.grab();
+#else
+		WaitForSingleObject(drawMutex, INFINITE);
+#endif
+				int size = drawQCount;
+
+#ifdef USE_ODBASE
+		drawMutex.release();
+#else
+		ReleaseMutex(drawMutex);
+#endif
+#endif
+				
+
 				glBindTexture(GL_TEXTURE_2D, videotextures[i]);
-				//if (nextFrameDelay[i] > 0)
+				if (nextFrameDelay[i] > 0)// || !pbosEmpty(i))// || size > 0)
 				{
-					if(enablePBOs)
+					if(enablePBOs)// &&  size > 0)
+					{
+						//if(size <= 0)
+						//{
+						//	printf("STOP PBO - pbosSize[%d]: %d - drawQCount: %d - pts[%d]: %f, qindex[%d]: %d - pbopts: %f -NEXT_FRAME_DELAY[%d]: %f\n", i, pbosSize(i), size, i, pts[i], i, qindex[i], pboPTS[qindex[i]], i, nextFrameDelay[i]);
+						//	continue;
+						//}
+						//printf("Draw PBO - size: %d - qindex[i]: %d - nextFrameDelay[i]: %f-----<\n", size, qindex[i], nextFrameDelay[i]);
+//						printf("pbosSize[%d]: %d - pts[%d]: %f, qindex[%d]: %d - pbopts: %f -NEXT_FRAME_DELAY[%d]: %f\n", i, pbosSize(i), i, pts[i], i, qindex[i], pboPTS[qindex[i]], i, nextFrameDelay[i]);
+						
 						drawPBO(i);
+						//drawPBO(i, size);
+
+						//nextFrameDelay[i] = -1;
+
+#if 0
+#ifdef USE_ODBASE
+		drawMutex.grab();
+#else
+		WaitForSingleObject(drawMutex, INFINITE);
+#endif
+				drawQCount--;
+
+#ifdef USE_ODBASE
+		drawMutex.release();
+#else
+		ReleaseMutex(drawMutex);
+#endif
+#endif
+					}
 					else
 					{
-						if( /*frameReady[i] && */rawRGBData[i] != NULL)
+						if( rawRGBData[i] != NULL)
 						{
 							static int lwidth[MAXSTREAMS] = {0};
 							static int lheight[MAXSTREAMS] = {0};
@@ -1691,17 +1835,13 @@ void updateVideoDraw()
 							lwidth[i] = inwidth[i];
 							lheight[i] = inheight[i];
 
-							//frameReady[i] = false;
-							//frameDisplayed[i] = true;
-
 							//printf("++Frame ready\n");
 						}
 						//else
 							//printf("++Frame not ready\n");
 					}
 				}
-
-				if (nextFrameDelay[i] == -1)
+				else if (nextFrameDelay[i] == -1)
 				{
 					//glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA/*GL_RGB*/, inwidth[i], inheight[i], 0, GL_RGBA/*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
 					//glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, inwidth[i], inheight[i], GL_RGBA/*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
@@ -1784,10 +1924,359 @@ void updateVideoDraw()
 			if(status[i] == aplay && fps[i] > 0 && fps[i] > minFPS)
 				minFPS = fps[i];
 		}
-		printf("minFPS: %f\n", minFPS);
+		//printf("minFPS: %f\n", minFPS);
 		if(minFPS != 0)
 			Sleep((DWORD)1000/minFPS);
 	}
 	//Sleep(10);
 }
 #endif
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////// Asynchronize Multimedia ////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void updateVideoCallback(void* arg)
+//void updateVideoCallback()
+{
+	int i = (int)arg;
+
+	printf("ASUpdateVideo thread started: %d.\n", i);
+
+	//double totTime = getGlobalVideoTimer(0);
+	while(true)
+	{
+		int totalActiveVideos = 0;
+		//for (int i = 0 ; i < MAXSTREAMS; i++)
+		{
+			//printf("\tStatus: %d\n", status[i]);
+			if(videoTypeStreams[i] == ffmpeg)
+				if (status[i] == aplay)
+				{
+					totalActiveVideos++;
+	
+#if 0
+#ifdef NETWORKED_AUDIO
+						if(enableDebugOutput)
+							//#ifdef DEBUG_PRINTF
+								fprintf(stdout, "\rNET_AUDIO_CLOCK[%d]: %019.16f(s)-GlobalVideoTimer[%d]: %f(s)-Diff: %09.6f(s)-GEN_AUDIO_CLOCK[%d]: %019.16f(s)", i, g_netAudioClock[i], i, 
+									currGlobalTimer[i], diff[i] + g_Delay[i], i, newClock);
+							//#endif
+#endif
+#ifdef LOCAL_AUDIO
+						if(enableDebugOutput)
+							//#ifdef DEBUG_PRINTF
+								fprintf(stdout, "-GlobalVideoTimer[%d]: %09.6f(s)-Diff: %09.6f(s)-GEN_AUDIO_CLOCK[%d]: %09.6f(s)", i, 
+									currGlobalTimer[i], diff[i] + g_Delay[i], i, newClock);
+#endif
+	#ifdef LOG
+						fprintf(videoDebugLogFile, "-NEXT_FRAME_DELAY[%d]: %f\n", i, nextFrameDelay[i]);
+	#endif
+						if(enableDebugOutput)
+							fprintf(stdout, "-NEXT_FRAME_DELAY[%d]: %f(ms)\n", i, nextFrameDelay[i]);
+
+#endif						
+
+					if(enablePBOs)
+					{					
+						double profileTime = getGlobalVideoTimer(i);
+						int ret = updatePBOsRingBuffer(i);
+						double durTime = getGlobalVideoTimer(i) - profileTime;
+						
+						//if(ret == 0)
+						//	printf("UPLTime : %09.6f -- Pbo upload thread - ret: %d\n", durTime, ret);
+
+						if(ret == -50)
+						{
+							printf("Finished uploading pbos---+\n");
+							totalActiveVideos--;
+						}
+					}
+					Sleep(10);
+					//printf("pbosSize[%d]: %d - drawQCount: %d - pts[%d]: %f, qindex[%d]: %d - pbopts: %f\n", i, pbosSize(i), drawQCount, i, pts[i], i, qindex[i], pboPTS[qindex[i]]);
+#ifdef LOG
+					fflush(videoDebugLogFile);
+					//fclose(videoDebugLogFile);
+#endif
+				}
+				else if (status[i] == apause)
+				{
+					//totalActiveVideos++;
+				}
+				else if (status[i] == astop)
+				{
+					//memset(rawRGBData[i], 120, sizeof(char) * inwidth[i] * inheight[i] * 4);
+					//glTexSubImage2D(GL_TEXTURE_2D, 0, GL_RGBA/*GL_RGB*/, inwidth[i], inheight[i], 0, GL_RGBA/*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
+				}
+				//DWORD core = GetCurrentProcessorNumber();
+				//printf("^^^^Main draw - Process Affinity: %d\n", core);
+		}
+
+		if(totalActiveVideos == 0)
+		{
+			//printf("Sleeping video callback thread: %d\n", i);
+			Sleep(100);
+		}
+	}
+	//printf("totTime:\t %f\n", getGlobalVideoTimer(0) - totTime);
+	printf("ASUpdateVideo thread ended: %d.\n", i);
+}
+
+void updateVideoDraw()
+{
+#ifdef NETWORKED_AUDIO
+	checkMessages();
+#endif
+
+	int totalActiveVideos = 0;
+	for (int i = 0 ; i < MAXSTREAMS; i++)
+	{
+		if(videoTypeStreams[i] == ffmpeg)
+			if (status[i] == aplay)
+			{
+				
+				totalActiveVideos++;
+
+				double dPboTime = -1, mapTime = -1, drawTime = -1;
+
+				double profileTime = getGlobalVideoTimer(i);
+				if(enablePBOs)
+				{
+					//updatePBOs(i);
+					mapPBOsRingBuffer(i);
+				}
+				mapTime = getGlobalVideoTimer(i) - profileTime;
+				//printf("MAPTime : %09.6f -- \n", mapTime);
+				drawTime = getGlobalVideoTimer(i);
+
+				double timeDif = getGlobalVideoTimer(i) - preTime[i];
+				if(timeDif >= nextFrameDelay[i])
+				{
+#if 1
+						currGlobalTimer[i] = getGlobalVideoTimer(i) / (double)1000;
+						currGlobalTimer[i] -= totalPauseLength[i];
+#endif
+					preTime[i] = getGlobalVideoTimer(i);
+
+	#if 1
+		#ifdef NETWORKED_AUDIO
+							double udpAudioClock = netAudioClock[i];
+							g_netAudioClock[i] = udpAudioClock;
+							if(preClock[i] == udpAudioClock)
+							{
+								udpAudioClock = -1;
+							}
+							else if(udpAudioClock >= 0)// if(preClock[i] < udpAudioClock)
+							//if(udpAudioClock >= 0)
+							{
+								preClock[i] = udpAudioClock;
+								diff[i] = (udpAudioClock-currGlobalTimer[i]);// + g_Delay[i];
+							}
+		#elif LOCAL_AUDIO
+							double openALAudioClock = getOpenALAudioClock(i);
+							double ffmpegClock = getFFmpegClock(i);
+							g_netAudioClock[i] = openALAudioClock;
+
+							static double lClockDiff[MAXSTREAMS] = {0};
+							double lcDiff = openALAudioClock - ffmpegClock;
+							if(fabs(lcDiff) < 1.0)
+								lClockDiff[i] = lcDiff;
+							else
+							{
+								//openALAudioClock = ffmpegClock + lClockDiff[i];
+								openALAudioClock = openALAudioClock - (lcDiff) + lClockDiff[i];
+							}
+							//double openALAudioClock = (getOpenALAudioClock(i) > 0) ? getOpenALAudioClock(i) : currGlobalTimer[i];
+							//printf("-lClockDiff[%d]: %f(s) - openALAudioClock[%d]: %f(s) - ffmpegClock[%d]: %f(s) - Diff[%d]: %f(s)\n", i, lClockDiff[i], i, openALAudioClock, i, ffmpegClock, i, lcDiff);
+							openALAudioClock = ffmpegClock;
+							//if(enableDebugOutput)
+							//	fprintf(stdout, "\rOAL_AUDIO_CLOCK[%d]: %09.4f(s)-ffmpegClock[%d]: %09.4f(s)", i, openALAudioClock, i, ffmpegClock);
+							if(preClock[i] == openALAudioClock)
+							{
+								openALAudioClock = -1;
+							}
+							else if(openALAudioClock >= 0)
+							//if(openALAudioClock >= 0)
+							{
+								preClock[i] = openALAudioClock;
+								diff[i] = (openALAudioClock-currGlobalTimer[i]);
+							}
+		#endif
+	#endif
+					double newClock = currGlobalTimer[i] + diff[i];
+					newClock = newClock + g_Delay[i];
+
+					pts[i] = getVideoPts(i);
+					double frameTimeDiff = timeDif-nextFrameDelay[i];
+					//if(enableDebugOutput)
+					//	printf("-frameDelayDiff: %09.6f(ms)\n", frameTimeDiff); //-Current frame diff in ms - //(frameTimeDiff / (double)1000)
+					newClock += (frameTimeDiff / (double)1000);
+					//newClock = netAudioClock[i];
+
+					/* Important */
+					double pboPts = pboPTS[getCurrPbo(i)];
+
+					//printf("qindex[%d]: %d - pbopts: %09.6f ++ \n", i, getCurrPbo(i), pboPTS[getCurrPbo(i)]);
+					if(pboPts == -1)
+					{
+						//printf("qindex[%d]: %d - pbopts: %09.6f - pbo not uploaded\n", i, getCurrPbo(i), pboPts);
+						////nextFrameDelay[i] = -1;
+						continue;
+					}
+
+					if(enablePBOs)
+						nextFrameDelay[i] = getNextVideoFramePbo(newClock, totalPauseLength[i], i, NULL, pboPts);
+					else
+						nextFrameDelay[i] = getNextVideoFrame(newClock, totalPauseLength[i], i, rawRGBData[i]);
+
+		#ifdef LOCAL_AUDIO
+					if(enableDebugOutput)
+						fprintf(stdout, "-GlobalVideoTimer[%d]: %09.6f(s)-Diff: %09.6f(s)-GEN_AUDIO_CLOCK[%d]: %09.6f(s)-pboPts: %09.6f", i, 
+										currGlobalTimer[i], diff[i] + g_Delay[i], i, newClock, pboPts);
+		#endif
+					if(enableDebugOutput)
+						fprintf(stdout, "-NEXT_FRAME_DELAY[%d]: %f(ms)\n", i, nextFrameDelay[i]);
+
+					//printf("qindex[%d]: %d - pbopts: %09.6f ++ - nextFrameDelay[i]: %f-----<\n", i, getCurrPbo(i), pboPts, nextFrameDelay[i]);
+					glBindTexture(GL_TEXTURE_2D, videotextures[i]);	
+					if (nextFrameDelay[i] > 0)// || !pbosEmpty(i))// || size > 0)
+					{
+						if(enablePBOs)
+						{
+	//						printf("pbosSize[%d]: %d - pts[%d]: %f, qindex[%d]: %d - pbopts: %f -NEXT_FRAME_DELAY[%d]: %f\n", i, pbosSize(i), i, pts[i], i, qindex[i], pboPTS[qindex[i]], i, nextFrameDelay[i]);
+							double profileTime = getGlobalVideoTimer(i);
+							drawPBOsRingBuffer(i);
+							dPboTime = getGlobalVideoTimer(i) - profileTime;
+							//printf("\t\tPBO-Time: %09.6f ++ \n", dPboTime);
+						}
+						else
+						{
+							if(rawRGBData[i] != NULL)
+							{
+								static int lwidth[MAXSTREAMS] = {0};
+								static int lheight[MAXSTREAMS] = {0};
+
+								if(lwidth[i] != inwidth[i] || lheight[i] != inheight[i] )
+								{
+									glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA/*GL_RGB*/, inwidth[i], inheight[i], 0, GL_BGRA /*GL_RGBA*/ /*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
+								}
+								else
+									glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, inwidth[i], inheight[i], GL_BGRA /*GL_RGBA*/ /*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
+
+								lwidth[i] = inwidth[i];
+								lheight[i] = inheight[i];
+							}
+						}
+
+						//printf("++Frame drawer sleeping - nextFrameDelay[%d]: %f\n", i, nextFrameDelay[i]);
+						//videoCallback(i, nextFrameDelay[i]);
+					}
+					if (nextFrameDelay[i] == -1)
+					{
+						printf("++nextFrameDelay[i] == -1\n");
+						//glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA/*GL_RGB*/, inwidth[i], inheight[i], 0, GL_RGBA/*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
+						//glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, inwidth[i], inheight[i], GL_RGBA/*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
+
+						nextFrameDelay[i] = 1;//1000.0f/fps[i];//30.0;
+					}
+					else if (nextFrameDelay[i] == -100)
+					{
+						printf("++nextFrameDelay[i] == 100\n");
+						nextFrameDelay[i] = 100;
+					}
+					else if (nextFrameDelay[i] == -50)
+					{
+						//printf("++nextFrameDelay[i] == -50\n");
+						//glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA/*GL_RGB*/, inwidth[i], inheight[i], 0, GL_RGBA/*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
+						//glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, inwidth[i], inheight[i], GL_RGBA/*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
+
+						//stopOrRestartVideo(i);
+					}
+					else if (nextFrameDelay[i] == -10)
+					{
+						printf("++nextFrameDelay[i] == -10\n");
+						nextFrameDelay[i] = 10;
+						//nextFrameDelay[i] = 0;
+						//printf("***Dropping frame[%d].\n", i);
+					}
+					//glBindTexture( GL_TEXTURE_2D, 0);
+				}
+				double durTime = getGlobalVideoTimer(i) - drawTime;
+				//printf("DRAWTime: %09.6f MAPTime : %09.6f -- PBO-Time: %09.6f ++\n", durTime, mapTime, dPboTime);
+			}
+			else if (status[i] == apause)
+			{
+				//totalActiveVideos++;
+			}
+			else if (status[i] == astop)
+			{
+				//memset(rawRGBData[i], 120, sizeof(char) * inwidth[i] * inheight[i] * 4);
+				//glTexSubImage2D(GL_TEXTURE_2D, 0, GL_RGBA/*GL_RGB*/, inwidth[i], inheight[i], 0, GL_RGBA/*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
+			}
+	}
+
+	GLenum err = glGetError();
+	if(err != GL_NO_ERROR)
+	{
+		printf("UpdateVideoDraw GL err.\n");
+		printf("OpenGL Error: %s (0x%x), @\n", glGetString(err), err);
+	}
+
+#if 0
+	if(intelliSleep)
+		{
+			int minFrameDelayIndex = -1;
+			double minFrameDelay = INT_MAX;
+			for(int i=0; i<MAXSTREAMS; i++)
+				if( status[i] == aplay && nextFrameDelay[i] < minFrameDelay && nextFrameDelay[i] > 0.0)
+				{
+					minFrameDelay = nextFrameDelay[i];
+					minFrameDelayIndex = i;
+				}
+
+			if(minFrameDelayIndex != -1 && minFrameDelay != INT_MAX)
+			{
+				double now = getGlobalVideoTimer(minFrameDelayIndex);
+				double remainingFrameDelay = fabs(double(now - preTime[minFrameDelayIndex] - nextFrameDelay[minFrameDelayIndex]));
+				//double sleepTime = (remainingFrameDelay > 10.5) ? remainingFrameDelay / 2 : 0;
+				//double sleepTime = (remainingFrameDelay > 5.5) ? remainingFrameDelay : 0;
+				double sleepTime;
+				if(remainingFrameDelay > 5.5)
+					sleepTime = remainingFrameDelay;
+				else
+				{
+					printf("///here");
+					sleepTime = 0;
+				}
+				//printf("///now: %f - preTime[%d]: %f - nextFrameDelay[%d]: %f - remainingFrameDelay: %f - sleepTime: %f\n", now / 1000.0f, minFrameDelayIndex, preTime[minFrameDelayIndex] / 1000.0f, minFrameDelayIndex, nextFrameDelay[minFrameDelayIndex], remainingFrameDelay, sleepTime);
+				Sleep((DWORD)sleepTime);
+			}
+		}
+#endif
+
+	if(totalActiveVideos == 0)
+		Sleep(100);
+
+	if(intelliSleep)
+	{
+		//int minFrameDelayIndex = -1;
+		//double minFrameDelay = INT_MAX;
+		//for(int i=0; i<MAXSTREAMS; i++)
+		//	if( status[i] == aplay && nextFrameDelay[i] < minFrameDelay && nextFrameDelay[i] > 0.0)
+		//	{
+		//		minFrameDelay = nextFrameDelay[i];
+		//		minFrameDelayIndex = i;
+		//	}
+
+		double minFPS = 0;
+		for (int i = 0 ; i < MAXSTREAMS; i++)
+		{
+			if(status[i] == aplay && fps[i] > 0 && fps[i] > minFPS)
+				minFPS = fps[i];
+		}
+		//printf("minFPS: %f\n", minFPS);
+		if(minFPS != 0)
+			Sleep((DWORD)1000/minFPS);
+	}
+	//Sleep(10);
+}

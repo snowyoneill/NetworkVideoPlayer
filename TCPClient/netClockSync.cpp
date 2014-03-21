@@ -3,9 +3,10 @@
 //#include "videoplayback.h"
 
 static bool broadcastAudio = true;
+#if 0
 static bool broadcastPTS = false;
-
 ofxUDPManager *udpPTSConnection = NULL;
+#endif
 
 #ifdef NETWORKED_AUDIO
 int _clientSenderID = -1;
@@ -16,7 +17,9 @@ int _tcpAudioServerPort = 2007; // default port
 
 ofxTCPClient* commandReceiver = NULL;
 ofxUDPManager *udpConnection = NULL;
-ofxUDPManager *udpConnectionSide[MAXSTREAMS];
+#if 0
+ofxUDPManager *udpConnectionSide[MAXSTREAMS]; // used to create a single UDP per stream
+#endif
 
 double netAudioClock[MAXSTREAMS];// = 0;
 double avgNetLatency = 0;
@@ -139,6 +142,7 @@ bool audioClientSetup()
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////// UDP ///////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
+#if 0
 int setupPTSUDPServer()
 {
 	if(broadcastPTS)
@@ -167,8 +171,6 @@ int setupPTSUDPServer()
 	return false;
 }
 
-
-
 int sendPTSTime(int stream, double pts)
 {
 	char buf[256];
@@ -185,6 +187,7 @@ int sendPTSTime(int stream, double pts)
 
 	return true;
 }
+#endif
 
 /* Setup a new blocking UDP connection.
  */
@@ -488,8 +491,10 @@ int connectToAudioServer()
 
 	connectToUDPServer();
 
+#if 0
 	if(broadcastPTS)
 		setupPTSUDPServer();
+#endif
 
 	return true;
 }

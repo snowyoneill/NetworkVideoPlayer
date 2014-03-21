@@ -395,8 +395,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				//	printf("Couldn't make current.\n");
 
                 DrawGLScene();
-            //    //SwapBuffers(hDC);
-			//	UpdateWindow( hWnd );        // Sends WM_PAINT message
+				//SwapBuffers(hDC);
+				//UpdateWindow( hWnd );        // Sends WM_PAINT message
 				//wglMakeCurrent(NULL, NULL);
             }
         }

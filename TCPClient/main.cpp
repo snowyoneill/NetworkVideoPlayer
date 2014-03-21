@@ -3,7 +3,6 @@
 #pragma warning(disable: 4996)
 #endif
 
-
 #include "main.h"
 #include "windowsglskeleton.h"
 #include "constants.h"
@@ -46,6 +45,7 @@ using namespace std;
 #endif
 // ---------------------------------------------------------------
 
+extern int pboMode;
 extern GLuint videotextures[MAXSTREAMS];
 //extern void notifyScreenSyncLoadVideo(string videoName, int videounit);
 void displayHelp();
@@ -2080,7 +2080,7 @@ void DrawGLScene()
 	{
 		printf("DrawScene GL err - %s.\n", gluErrorString(err));
 	}
-	Sleep(5);
+	//Sleep(5);
 #endif
 
 	//glClear(GL_COLOR_BUFFER_BIT);
@@ -2211,7 +2211,6 @@ void keyHandle(char key)
 	}
 }
 
-extern int pboMode;
 /* Handle windows key up events.
 */
 void upKeyHandle(char key)
