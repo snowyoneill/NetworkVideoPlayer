@@ -138,6 +138,7 @@ void freetype_add_text( vertex_buffer_t * buffer, texture_font_t * font,
                                      { x1,y1,0,  s1,t1,  r,g,b,a },
                                      { x1,y0,0,  s1,t0,  r,g,b,a } };
             //vertex_buffer_push_back( buffer, vertices, 4, indices, 6 );
+
             vertex_buffer_push_back_indices( buffer, indices, 6 );
             vertex_buffer_push_back_vertices( buffer, vertices, 4 );
             pen->x += glyph->advance_x;
@@ -559,6 +560,8 @@ int InitGL()
 	return true;
 }
 
+void drawInitialText();
+
 /* Initialise video player environment.
  */
 int Init(char* cmdline)
@@ -886,18 +889,6 @@ int Init(char* cmdline)
 #endif
 
 #ifdef USE_FREETYPE_FONTS
-    // create an array of display tips
-    const int cOptions = 8;
-    std::string helpText[cOptions] = { 
-                         "L = Load a video file.",
-						 "R = Reset the current video.",
-                         "S = Stop video.", 
-                         "VK_UP = Add 0.001 to global delay.",
-						 "VK_DOWN = Minus 0.001 from global delay.",
-						 "VK_RIGHT = Add 0.1 to global delay.",
-						 "VK_LEFT = Minus 0.1 from global delay.",
-						 "E = Exit or VK_ESCAPE."
-            };
 	//glutInit( 0, NULL);
 	/* Text to be printed */
     //wchar_t *text = L"A Quick Brown Fox Jumps Over The Lazy Dog 0123456789";
@@ -918,22 +909,7 @@ int Init(char* cmdline)
                                      L"`abcdefghijklmnopqrstuvwxyz{|}~");
     //texture_font_load_glyphs( font, text);
 
-    /* Where to start printing on screen */
-    vec2 pen = {0,0};
-    vec4 black = {1,1,1,1};
-
-	float oPosition = 20.0;
-	/* Add text tothe buffer (see demo-font.c for the add_text code) */
-    //freetype_add_text( text_buffer, font,L"Hello World!"/*text*/, &black, &pen );
-	for(int i=0; i<cOptions; i++, oPosition += 15)
-	{
-		pen.x = 5;
-		pen.y = oPosition;
-
-		wchar_t hText[256];
-		swprintf (hText, 256, L"%hs", helpText[i].c_str());
-		freetype_add_text( text_buffer, font, hText, &black, &pen );
-	}
+	drawInitialText();
 
 	//texture_font_delete( font );
 #endif
@@ -953,6 +929,119 @@ int Init(char* cmdline)
 	}
 
 	return 1;
+}
+
+void drawInitialText()
+{
+#ifdef USE_FREETYPE_FONTS
+    // create an array of display tips
+    const int cOptions = 8;
+    std::string helpText[cOptions] = { 
+                         "L = Load a video file.",
+						 "R = Reset the current video.",
+                         "S = Stop video.", 
+                         "VK_UP = Add 0.001 to global delay.",
+						 "VK_DOWN = Minus 0.001 from global delay.",
+						 "VK_RIGHT = Add 0.1 to global delay.",
+						 "VK_LEFT = Minus 0.1 from global delay.",
+						 "E = Exit or VK_ESCAPE."
+            };
+
+	wchar_t dText[256];
+    /* Where to start printing on screen */
+    vec2 pen = {0,0};
+    vec4 black = {1,1,1,1};
+
+	float oPosition = 20.0;
+	/* Add text tothe buffer (see demo-font.c for the add_text code) */
+    //freetype_add_text( text_buffer, font,L"Hello World!"/*text*/, &black, &pen );
+	for(int i=0; i<cOptions; i++, oPosition += 15)
+	{
+		pen.x = 5;
+		pen.y = oPosition;
+
+		swprintf (dText, 256, L"%hs", helpText[i].c_str());
+		freetype_add_text( text_buffer, font, dText, &black, &pen );
+	}
+
+	int lx = 0;
+	int ly = 0;
+
+	pen.x = fbowidth-350.0f;
+	pen.y = 20.0f;
+
+	pen.x += lx;
+	pen.y += ly;
+	swprintf (dText, 256, L"%s", L"System -> FPS:", currFPS);
+	freetype_add_text( text_buffer, font, dText, &black, &pen );
+
+	pen.x = fbowidth-350.0f;
+	pen.y = 35.0f;
+	pen.x += lx;
+	pen.y += ly;
+	swprintf (dText, 256, L"%s", L"System -> g_Delay:");
+	freetype_add_text( text_buffer, font, dText, &black, &pen );
+
+	pen.x = fbowidth-350.0f;
+	pen.y = 50.0f;
+	pen.x += lx;
+	pen.y += ly;
+	swprintf (dText, 256, L"%s", L"System -> currGlobalTimer:");
+	freetype_add_text( text_buffer, font, dText, &black, &pen );
+
+	pen.x = fbowidth-350.0f;
+	pen.y = 65.0f;
+	pen.x += lx;
+	pen.y += ly;
+#if NETWORKED_AUDIO
+	swprintf (dText, 256, L"%s", L"System -> NET_AUDIO_CLOCK:");
+#else
+	swprintf (dText, 256, L"%s", L"System -> OAL_AUDIO_CLOCK:");
+#endif
+	freetype_add_text( text_buffer, font, dText, &black, &pen );
+
+	pen.x = fbowidth-350.0f;
+	pen.y = 80.0f;
+	pen.x += lx;
+	pen.y += ly;
+	swprintf (dText, 256, L"%s", L"System -> preClock:");
+	freetype_add_text( text_buffer, font, dText, &black, &pen );
+
+	pen.x = fbowidth-350.0f;
+	pen.y = 95.0f;
+	pen.x += lx;
+	pen.y += ly;
+	swprintf (dText, 256, L"%s", L"System -> PTS:");
+	freetype_add_text( text_buffer, font, dText, &black, &pen );
+
+	pen.x = fbowidth-350.0f;
+	pen.y = 110.0f;
+	pen.x += lx;
+	pen.y += ly;
+	swprintf (dText, 256, L"%s", L"System -> LClock:");
+	freetype_add_text( text_buffer, font, dText, &black, &pen );
+
+	pen.x = fbowidth-350.0f;
+	pen.y = 125.0f;
+	pen.x += lx;
+	pen.y += ly;
+	swprintf (dText, 256, L"%s", L"System -> diff:");
+	freetype_add_text( text_buffer, font, dText, &black, &pen );
+
+	pen.x = fbowidth-350.0f;
+	pen.y = 140.0f;
+	pen.x += lx;
+	pen.y += ly;
+	swprintf (dText, 256, L"%s", L"System -> NEXT_FRAME_DELAY:");
+	freetype_add_text( text_buffer, font, dText, &black, &pen );
+
+	pen.x = fbowidth-350.0f;
+	pen.y = 155.0f;
+	pen.x += lx;
+	pen.y += ly;
+	swprintf (dText, 256, L"%s", L"System -> VIDEO_AUDIO_SYNC:");
+	freetype_add_text( text_buffer, font, dText, &black, &pen );
+#endif
 }
 
 #if 0
@@ -1288,12 +1377,15 @@ void printVideoDebugInfo(int side, int lx, int ly)
 #endif
 
 #ifdef USE_FREETYPE_FONTS
+
 	wchar_t dText[256];
 	vec2 pen = {0,0};
 	vec4 black = {1,1,1,1};
 
 	pen.x = fbowidth-350.0f;
 	pen.y = 20.0f;
+
+#if 0
 
 	pen.x += lx;
 	pen.y += ly;
@@ -1366,7 +1458,7 @@ void printVideoDebugInfo(int side, int lx, int ly)
 	pen.y += ly;
 	swprintf (dText, 256, L"%s", L"System -> VIDEO_AUDIO_SYNC:");
 	freetype_add_text( text_buffer2, font, dText, &black, &pen );
-
+#endif
 	// -----------------------------------------------------------
 
 	pen.x = fbowidth-90.0f;
@@ -1954,12 +2046,14 @@ void DrawGLScene()
 	////////////////////////////////////////// Draw fonts  /////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#if 1
 #ifdef USE_FREETYPE_FONTS
 		//glClearColor( 1, 0, 0, 1 );
 		//glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 
 		//vertex_buffer_delete(text_buffer2);
 		//text_buffer2 = vertex_buffer_new( "v3f:t2f:c4f" );
+
 		vertex_buffer_clear(text_buffer2);
 
 		vec2 pen = {0,0};
@@ -2058,6 +2152,7 @@ void DrawGLScene()
 		glBindTexture( GL_TEXTURE_2D, 0);
 		glDisable( GL_TEXTURE_2D );
 		glDisable( GL_BLEND );
+#endif
 #endif
 	}
 	////////////////////////////////////////////////////////////////////////////////////////////////////////

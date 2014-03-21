@@ -1126,6 +1126,7 @@ void frameDecoder(void * parg)
 double getNextVideoFrame(double netClock, double pauseLength, int side, char *plainData)
 #else
 double getNextVideoFrame(double openALAudioClock, double pauseLength, int side, char *plainData)
+#endif
 {
 	double ret = -5;
 #ifdef USE_ODBASE
@@ -1147,7 +1148,7 @@ double getNextVideoFrame(double openALAudioClock, double pauseLength, int side, 
 #endif
 	return ret;
 }
-#endif
+
 
 //double getNextVideoFramePbo(double netClock, double pauseLength, int side, char *plainData)
 double getNextVideoFramePbo(double netClock, double pauseLength, int side, char *plainData, double pboPTS)
