@@ -42,6 +42,7 @@ int initAudioEnvir();
 void decodeAndPlayAllAudioStreams(void* dummy);
 int closeAudioStream(int sourceNum);
 int pauseAudioStream(int sourceNum);
+void stopAudioDecoder();
 
 //extern void notifyStopOrRestartVideo(int videounit);
 #endif
@@ -55,6 +56,8 @@ void seekVideoThread(int side, double clock, double incr);
 
 //double getNextVideoFramePbo(double netClock, double pauseLength, int side, char *plainData);
 double getNextVideoFramePbo(double netClock, double pauseLength, int side, char *plainData, double pboPTS);
+
+void pauseFrameReader(int side);
 
 
 double getNextVideoFrameNext(int side, char *plainData, int pboIndex, double& pboPTS);

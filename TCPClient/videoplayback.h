@@ -25,6 +25,8 @@ extern double currGlobalTimer[MAXSTREAMS];
 extern double diff[MAXSTREAMS];
 extern double preTime[MAXSTREAMS];
 extern double pts[MAXSTREAMS];
+extern double frameTimeDiff[MAXSTREAMS];
+extern double g_newClock[MAXSTREAMS];
 
 extern enum	 {astop, aplay, apause, invalid};
 extern int	 status[MAXSTREAMS];
@@ -34,10 +36,12 @@ extern int	 inwidth[MAXSTREAMS], inheight[MAXSTREAMS];
 
 //extern void startGlobalVideoTimer(int videounit);
 extern double getGlobalVideoTimer(int videounit);
+extern void notifyStopOrRestartVideo(int videounit);
+extern void notifyScreenSyncLoadVideo(string videoName, int videounit);
 
 //////////////////////////////////////////// INITIALISE AUDIO /////////////////////////////////////////////////
 void initVideoAudioPlayback(char *serverIP, int audioServerTCPPort, int audioServerUDPPort, int ClientID, int side, char* fileName, bool autostart, bool testLatency);
-
+void closeAudioEnv();
 ///////////////////////////////////////////// LOAD FFS/VIDEO //////////////////////////////////////////////////
 void initvideo();
 

@@ -47,6 +47,8 @@ double	diff[MAXSTREAMS];
 double	preTime[MAXSTREAMS];
 int		videoTypeStreams[MAXSTREAMS];
 double	pts[MAXSTREAMS];
+double frameTimeDiff[MAXSTREAMS];
+double g_newClock[MAXSTREAMS];
 
 #ifdef FFS
 int compressionType[MAXSTREAMS], compressed[MAXSTREAMS], blocks[MAXSTREAMS];
@@ -472,35 +474,38 @@ bool loadVideo(const char* path, int videounit)
 //void seekVideo(int side, double netclock, double seekDuration)
 void seekVideo(int side, double seekDuration, double seekBaseTime, bool sendSeekTCPCommand)
 {
-	double clock = 0.0;
-	if(seekBaseTime > 0)
-		clock = seekBaseTime;
-	else
+	if(status[side] == aplay || status[side] == apause)
 	{
-#ifdef LOCAL_AUDIO
-	double openALAudioClock = getOpenALAudioClock(side);
-	double ffmpegClock = getFFmpegClock(side);
-	if(openALAudioClock >= 0 || ffmpegClock >= 0)
-		clock = ffmpegClock;
-#endif
-#ifdef NETWORKED_AUDIO
-	clock = currGlobalTimer[side] + diff[side];
-	printf("currGlobalTimer[%d]: %f + diff[%d]: %f - netAudioClock[%d] %f = %f\n", side, currGlobalTimer[side], side, diff[side], side, netAudioClock[side], currGlobalTimer[side] + diff[side] - netAudioClock[side]);
-	//clock = netAudioClock[side];
-	//clock = currGlobalTimer[side];
-#endif
+		double clock = 0.0;
+		if(seekBaseTime > 0)
+			clock = seekBaseTime;
+		else
+		{
+	#ifdef LOCAL_AUDIO
+		double openALAudioClock = getOpenALAudioClock(side);
+		double ffmpegClock = getFFmpegClock(side);
+		if(openALAudioClock >= 0 || ffmpegClock >= 0)
+			clock = ffmpegClock;
+	#endif
+	#ifdef NETWORKED_AUDIO
+		clock = currGlobalTimer[side] + diff[side];
+		printf("currGlobalTimer[%d]: %f + diff[%d]: %f - netAudioClock[%d] %f = %f\n", side, currGlobalTimer[side], side, diff[side], side, netAudioClock[side], currGlobalTimer[side] + diff[side] - netAudioClock[side]);
+		//clock = netAudioClock[side];
+		//clock = currGlobalTimer[side];
+	#endif
+		}
+		printf("clock: %f - seekDuration: %f - seekBaseTime: %f \n", clock, seekDuration, seekBaseTime);
+
+		seekVideoThread(side, clock, seekDuration);
+		//seekVideoThread(side, seekDuration);
+
+	#ifdef NETWORKED_AUDIO
+			if(sendSeekTCPCommand)
+				seekVideoCommand(_clientSenderID, side, seekDuration);
+	#endif
+
+		printf("\n~~~Video seek %f(s).\n", seekDuration);
 	}
-	printf("clock: %f - seekDuration: %f - seekBaseTime: %f \n", clock, seekDuration, seekBaseTime);
-
-	seekVideoThread(side, clock, seekDuration);
-	//seekVideoThread(side, seekDuration);
-
-#ifdef NETWORKED_AUDIO
-		if(sendSeekTCPCommand)
-			seekVideoCommand(_clientSenderID, side, seekDuration);
-#endif
-
-	printf("\n~~~Video seek %f(s).\n", seekDuration);
 }
 
 /* Starts the specified video stream.
@@ -621,6 +626,7 @@ void pauseVideo(int videounit, bool sendPauseTCPCommand)
 			printf("Video paused for %f(s) - total delay: %f(s)\n", pauseLen, totalPauseLength[videounit]);
 			status[videounit] = aplay;
 		}
+	pauseFrameReader(videounit);
 #ifdef LOCAL_AUDIO
 	pauseAudioStream(videounit);
 #endif
@@ -656,6 +662,11 @@ double getOpenALAudioClock(int side)
 double getFFmpegClock(int side)
 {
 	return getFFmpeg(side);
+}
+
+void closeAudioEnv()
+{
+	stopAudioDecoder();
 }
 #endif
 #endif
@@ -1134,19 +1145,20 @@ void updateVideo()
 								currGlobalTimer[i], diff[i] + g_Delay[i], i, newClock);
 #endif
 
-					double frameTimeDiff = timeDif-nextFrameDelay[i];
-					if(enableDebugOutput)
-						printf("-frameDelayDiff: %09.6f(ms)", frameTimeDiff); //-Current frame diff in ms - //(frameTimeDiff / (double)1000)
-					//printf("\n");
+					frameTimeDiff[i] = timeDif-nextFrameDelay[i];
+					//if(enableDebugOutput)
+					if ( frameTimeDiff[i] > 5.00 ) 
+						printf("-frameDelayDiff: %09.6f(ms)", frameTimeDiff[i]); //-Current frame diff in ms - //(frameTimeDiff[i] / (double)1000)
+					printf("\n");
 					#ifdef LOG
 					//#ifdef DEBUG_PRINTF
-						fprintf(videoDebugLogFile, "-frameTimeDif: %09.6f", frameTimeDiff);
-						//printf("-frameTimeDif: %09.6f", frameTimeDiff);
+						fprintf(videoDebugLogFile, "-frameTimeDif: %09.6f", frameTimeDiff[i]);
+						//printf("-frameTimeDif: %09.6f", frameTimeDiff[i]);
 					//#endif
 					#endif
 					//memset(rawRGBData[i], 128, sizeof(char) * inwidth[i] * inheight[i] * 4);
 					pts[i] = getVideoPts(i);
-					newClock += (frameTimeDiff / (double)1000);
+					newClock += (frameTimeDiff[i] / (double)1000);
 					//newClock = pts[i];//preClock[i];//getGlobalVideoTimer(i) / (double)1000;//pts[i]/* - (1 / fps[i])*/ + g_Delay[i];
 					//newClock = netAudioClock[i];
 
@@ -1358,10 +1370,15 @@ void updateVideo()
 	//printf("totTime:\t %f\n", getGlobalVideoTimer(0) - totTime);
 }
 
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////// Synchronous Multimedia ////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 #ifdef MULTI_TIMER
+#if 0
 //int drawQCount = 0;
 
-#if 0
 #ifdef USE_ODBASE
 	ODBase::Lock drawMutex("drawMutex");
 #else
@@ -1933,7 +1950,7 @@ void SupdateVideoDraw()
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////// Asynchronize Multimedia ////////////////////////////////////////////////
+////////////////////////////////////// Asynchronous Multimedia ////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void updateVideoCallback(void* arg)
@@ -2034,11 +2051,11 @@ void updateVideoDraw()
 		if(videoTypeStreams[i] == ffmpeg)
 			if (status[i] == aplay)
 			{
-				
 				totalActiveVideos++;
 
 				double dPboTime = -1, mapTime = -1, drawTime = -1;
 
+				static double staticTime = getGlobalVideoTimer(i);
 				double profileTime = getGlobalVideoTimer(i);
 				if(enablePBOs)
 				{
@@ -2048,9 +2065,12 @@ void updateVideoDraw()
 				mapTime = getGlobalVideoTimer(i) - profileTime;
 				//printf("MAPTime : %09.6f -- \n", mapTime);
 				drawTime = getGlobalVideoTimer(i);
-
 				double timeDif = getGlobalVideoTimer(i) - preTime[i];
+
+				//printf("profileTime: %09.6f -- timeDif: %09.6f -- nextFrameDelay: %09.6f\n", (profileTime-staticTime), timeDif, nextFrameDelay[i]);
+
 				if(timeDif >= nextFrameDelay[i])
+				//if(timeDif >= nextFrameDelay[i]-5.00)
 				{
 #if 1
 						currGlobalTimer[i] = getGlobalVideoTimer(i) / (double)1000;
@@ -2067,7 +2087,6 @@ void updateVideoDraw()
 								udpAudioClock = -1;
 							}
 							else if(udpAudioClock >= 0)// if(preClock[i] < udpAudioClock)
-							//if(udpAudioClock >= 0)
 							{
 								preClock[i] = udpAudioClock;
 								diff[i] = (udpAudioClock-currGlobalTimer[i]);// + g_Delay[i];
@@ -2103,24 +2122,52 @@ void updateVideoDraw()
 							}
 		#endif
 	#endif
-					double newClock = currGlobalTimer[i] + diff[i];
-					newClock = newClock + g_Delay[i];
+					double newClock = currGlobalTimer[i] + diff[i] + g_Delay[i];
 
-					pts[i] = getVideoPts(i);
-					double frameTimeDiff = timeDif-nextFrameDelay[i];
+#ifdef NETWORKED_AUDIO
+					if(enableDebugOutput)
+						//#ifdef DEBUG_PRINTF
+							fprintf(stdout, "\rNET_AUDIO_CLOCK[%d]: %019.16f(s)-GlobalVideoTimer[%d]: %f(s)-Diff: %09.6f(s)-GEN_AUDIO_CLOCK[%d]: %019.16f(s)", i, g_netAudioClock[i], i, 
+								currGlobalTimer[i], diff[i] + g_Delay[i], i, newClock);
+						//#endif
+#endif
+#ifdef LOCAL_AUDIO
+					if(enableDebugOutput)
+						//#ifdef DEBUG_PRINTF
+							fprintf(stdout, "-GlobalVideoTimer[%d]: %09.6f(s)-Diff: %09.6f(s)-GEN_AUDIO_CLOCK[%d]: %09.6f(s)", i, 
+								currGlobalTimer[i], diff[i] + g_Delay[i], i, newClock);
+#endif
+
+					double frameDiff = timeDif-nextFrameDelay[i];
 					//if(enableDebugOutput)
-					//	printf("-frameDelayDiff: %09.6f(ms)\n", frameTimeDiff); //-Current frame diff in ms - //(frameTimeDiff / (double)1000)
-					newClock += (frameTimeDiff / (double)1000);
+					if ( frameDiff > 5.00 )
+						printf("-frameDelayDiff: %09.6f(ms) nextFrameDelay: %09.6f(ms)\n", frameDiff, nextFrameDelay[i]); //-Current frame diff in ms - //(frameTimeDiff[i] / (double)1000)
+					printf("\n");
+
+					frameTimeDiff[i] = frameDiff / (double)1000;
+					newClock += frameTimeDiff[i];
 					//newClock = netAudioClock[i];
+
+					#define PRECISION 0.01
+					newClock -= fmod(newClock,PRECISION);
+
+					g_newClock[i] = newClock;
+					pts[i] = pboPTS[getCurrPbo(i)];//getVideoPts(i);
 
 					/* Important */
 					double pboPts = pboPTS[getCurrPbo(i)];
+
+					//if(abs(pts[i]-newClock) > 2.0)
+					//{
+					//	printf("Seeking video stream: %d\n", i);
+					//	seekVideo(i, diff[i], pts[i]-newClock, false);
+					//}
 
 					//printf("qindex[%d]: %d - pbopts: %09.6f ++ \n", i, getCurrPbo(i), pboPTS[getCurrPbo(i)]);
 					if(pboPts == -1)
 					{
 						//printf("qindex[%d]: %d - pbopts: %09.6f - pbo not uploaded\n", i, getCurrPbo(i), pboPts);
-						////nextFrameDelay[i] = -1;
+						nextFrameDelay[i] = 10;
 						continue;
 					}
 
@@ -2139,11 +2186,14 @@ void updateVideoDraw()
 
 					//printf("qindex[%d]: %d - pbopts: %09.6f ++ - nextFrameDelay[i]: %f-----<\n", i, getCurrPbo(i), pboPts, nextFrameDelay[i]);
 					glBindTexture(GL_TEXTURE_2D, videotextures[i]);	
-					if (nextFrameDelay[i] > 0)// || !pbosEmpty(i))// || size > 0)
+					if (nextFrameDelay[i] >= 0)// || !pbosEmpty(i))// || size > 0)
 					{
+						//#define PRECISION 1.0
+						//frameDiff -= fmod(frameDiff,PRECISION);
+						//nextFrameDelay[i] -= frameDiff;//frameTimeDiff[i];;
 						if(enablePBOs)
 						{
-	//						printf("pbosSize[%d]: %d - pts[%d]: %f, qindex[%d]: %d - pbopts: %f -NEXT_FRAME_DELAY[%d]: %f\n", i, pbosSize(i), i, pts[i], i, qindex[i], pboPTS[qindex[i]], i, nextFrameDelay[i]);
+							//printf("pbosSize[%d]: %d - pts[%d]: %f, qindex[%d]: %d - pbopts: %f -NEXT_FRAME_DELAY[%d]: %f\n", i, pbosSize(i), i, pts[i], i, qindex[i], pboPTS[qindex[i]], i, nextFrameDelay[i]);
 							double profileTime = getGlobalVideoTimer(i);
 							drawPBOsRingBuffer(i);
 							dPboTime = getGlobalVideoTimer(i) - profileTime;
@@ -2200,7 +2250,14 @@ void updateVideoDraw()
 						//printf("***Dropping frame[%d].\n", i);
 					}
 					//glBindTexture( GL_TEXTURE_2D, 0);
+
+					//preTime[i] = getGlobalVideoTimer(i);
 				}
+				else
+				{
+					//printf("~Underrun->diff: %09.6f(ms) nextFrameDelay: %09.6f(ms)\n", timeDif, nextFrameDelay[i]);
+				}
+
 				double durTime = getGlobalVideoTimer(i) - drawTime;
 				//printf("DRAWTime: %09.6f MAPTime : %09.6f -- PBO-Time: %09.6f ++\n", durTime, mapTime, dPboTime);
 			}
@@ -2214,12 +2271,14 @@ void updateVideoDraw()
 				//glTexSubImage2D(GL_TEXTURE_2D, 0, GL_RGBA/*GL_RGB*/, inwidth[i], inheight[i], 0, GL_RGBA/*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
 			}
 	}
-
-	GLenum err = glGetError();
-	if(err != GL_NO_ERROR)
+	if(enableDebugOutput)
 	{
-		printf("UpdateVideoDraw GL err.\n");
-		printf("OpenGL Error: %s (0x%x), @\n", glGetString(err), err);
+		GLenum err = glGetError();
+		if(err != GL_NO_ERROR)
+		{
+			printf("UpdateVideoDraw GL err.\n");
+			printf("OpenGL Error: %s (0x%x), @\n", glGetString(err), err);
+		}
 	}
 
 #if 0

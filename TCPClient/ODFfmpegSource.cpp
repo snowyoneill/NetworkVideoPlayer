@@ -58,7 +58,7 @@ static bool initializedFfmpeg = false;
 
 #define MAX_AUDIOQ_SIZE (5 * 16 * 1024)
 #if 1
-#define MAX_VIDEOQ_SIZE (5 * 16 * 1024)
+#define MAX_VIDEOQ_SIZE (5 * 256 * 1024)
 #endif
 /* no AV sync correction is done if below the AV sync threshold */
 #define AV_SYNC_THRESHOLD 0.01
@@ -83,7 +83,7 @@ const double ODFfmpegSource::UnknownTime = -1.0;
 const double ODFfmpegSource::UnknownFPS = -1.0;
 
 AVPacket flush_pkt, end_pkt;
-//bool decoderReachedEnd = false;
+bool decoderReachedEnd;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////// INTERNAL VIDEO STATE ////////////////////////////////////////////////
@@ -216,6 +216,8 @@ struct ODFfmpegSource::State
 	int64_t			seek_rel;
 	int             seek_flags;
 	int64_t         seek_pos;
+
+	bool isPaused;
 
 	/* Mutexs / semaphores initialization - resource access control to queues.
 	 */
@@ -514,7 +516,7 @@ int ODFfmpegSource::vid_packet_queue_get(PacketQueue *q, AVPacket *pkt)
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////// FRAME DISPLAY/DELAY ///////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
-#if 0
+#if 1
 #ifdef VIDEO_DECODING
 /* no AV sync correction is done if below the minimum AV sync threshold */
 #define AV_SYNC_THRESHOLD_MIN 0.01
@@ -795,10 +797,19 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 
 	if(state->codecCtx_)
 	{
-		//state->pictqMutex.grab();
-		if(state->pictq_size == 0 && ptsClk < 0)
+//#ifdef USE_ODBASE
+//		state->pictqMutex.grab();
+//#else
+//		WaitForSingleObject(state->pictqMutex, INFINITE);
+//#endif
+//		if(state->pictq_size == 0 && ptsClk < 0)
+		if(ptsClk < 0)
 		{
-			//state->pictqMutex.release();
+//#ifdef USE_ODBASE
+//			state->pictqMutex.release();
+//#else
+//			ReleaseMutex(state->pictqMutex);
+//#endif
 			//if(atVideoEnd_)
 			if(state->quit)
 			{
@@ -818,8 +829,11 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 		//}
 		else
 		{
-			//state->pictqMutex.release();
-
+//#ifdef USE_ODBASE
+//			state->pictqMutex.release();
+//#else
+//			ReleaseMutex(state->pictqMutex);
+//#endif
 
 			//vp = &state->pictq[state->pictq_rindex];
 			////printf("Video Index: %d\n", state->pictq_rindex);
@@ -844,33 +858,41 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 			ref_clock = openALAudioClock;
 			//ref_clock = get_audio_clock();
 #endif
-
-
 			//diff = vp->pts - ref_clock;
-			diff = ptsClk - ref_clock;
+			//printf(" - pts: %07.2f - ref_clock: %07.2f\n", vp->pts, ref_clock);
 
+			diff = ptsClk - ref_clock;
 			//printf("+++pts: %07.2f - ref_clock: %07.2f\n", ptsClk, ref_clock);
 
-
-
-			//printf(" - pts: %07.2f - ref_clock: %07.2f\n", vp->pts, ref_clock);
+#if 0
+		sync_threshold = FFMAX(AV_SYNC_THRESHOLD_MIN, FFMIN(AV_SYNC_THRESHOLD_MAX, delay));
+		double max_frame_duration = (state->formatCtx_->flags & AVFMT_TS_DISCONT) ? 10.0 : 3600.0;
+        if (/*!isnan(diff) && */fabs(diff) < max_frame_duration) {
+            if (diff <= -sync_threshold)
+                delay = FFMAX(0, delay + diff);
+            else if (diff >= sync_threshold && delay > AV_SYNC_FRAMEDUP_THRESHOLD)
+                delay = delay + diff;
+            else if (diff >= sync_threshold)
+                delay = 2 * delay;
+        }
+#endif
 
 			/* Skip or repeat the frame. Take delay into account
 			FFPlay still doesn't "know if this is the best guess." */
 			sync_threshold = (delay > AV_SYNC_THRESHOLD) ? delay : AV_SYNC_THRESHOLD;
-			//if(fabs(diff) < AV_NOSYNC_THRESHOLD)
+			if(fabs(diff) < AV_NOSYNC_THRESHOLD)
 			{
 				if(diff <= -sync_threshold)
 					delay = 0;
-				//else if(diff > sync_threshold)
-					//return -10; // before the delay is add to the frame timer.
+				//if(diff >= 2*sync_threshold)
+				//	return -10;
 				else if(diff >= sync_threshold)
 					delay = 2 * delay;
 			}
 			//printf(" - diff: %07.2f - delay: %07.2f - sync_threshold: %07.2f", diff, delay, sync_threshold);
 			state->frame_timer += delay;
-			/* computer the REAL delay */
 
+			/* computer the REAL delay */
 			actual_delay = state->frame_timer - (av_gettime() / 1000000.0) + pauseLength;
 			//actual_delay = state->frame_timer - ref_clock + pauseLength;
 			
@@ -878,28 +900,33 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 
 			//printf("pbo -> frame_timer: %09.6f - av_gettime: %09.6f - pauseLength: %09.6f - actual_delay: %09.6f\n", state->frame_timer, ref_clock, pauseLength, actual_delay);
 			//printf(" - pauseLength %f - actual_delay: %07.2f", pauseLength, actual_delay);
+
+			//actual_delay = diff + delay + pauseLength;
+			//printf("ptsClk: %f - ref_clock: %f - delay: %f - actual_delay: %f\n", ptsClk, ref_clock, delay, actual_delay);
+
 			if(actual_delay < 0.01) {
 				/* Really it should skip the picture instead */
 				//actual_delay = 0.01;
-				actual_delay = 0.001;
+				actual_delay = delay/2.0f;
 				//actual_delay *= -1;
 			}
+			//else if(actual_delay > 1.0) {
+			//	actual_delay = 0.1;
+			//}
 			//else
 			//	actual_delay = 0.03;
-			double f_delay = (actual_delay * 1000/* + 0.5*/);
+			double f_delay = int(actual_delay * 1000/* + 0.5*/);
 			//printf(" - f_delay: %07.2f\n", f_delay);
 
-			//if(diff >= sync_threshold)
-				//return -10;
-				//return f_delay;
-
-			//if(diff > 2.0)
+			//if(abs(diff) > 2.0)
 			//{
-			//	printf("Seek stream - vp->pts: %6.2f - ref_clock: %6.2f - diff: %6.2f", vp->pts, ref_clock, diff);
+			//	printf("Seek stream - vp->pts: %6.2f - ref_clock: %6.2f - diff: %6.2f\n", ptsClk, ref_clock, diff);
 			//	//seek(netClock, netClock - vp->pts);
-			//	seek(netClock, -diff);
+			//	seek(ref_clock, diff);
 			//}
 
+			//if(diff >= 2*sync_threshold)
+			//	return -10;
 			
 			//printf("ptsClk: %6.2f - ref_clock: %6.2f - diff: %6.2f - sync_threshold: %6.2f - f_delay: %6.2f.\n", ptsClk, ref_clock, diff, sync_threshold, f_delay);
 
@@ -907,11 +934,6 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 			//if(diff <= sync_threshold || diff > sync_threshold * VIDEO_PICTURE_QUEUE_SIZE)
 			//if(diff <= -sync_threshold || diff > sync_threshold)
 			//if(diff <= sync_threshold)
-
-
-
-
-
 			//{
 			//	/* update queue for next picture! */
 			//	if(++state->pictq_rindex == VIDEO_PICTURE_QUEUE_SIZE)
@@ -927,6 +949,27 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 			//	//ReleaseSemaphore(state->pictqSemaphore, 1, NULL );
 			//	state->pictqSemaphore.signal();	
 			//}
+
+			if(f_delay >= 10 && f_delay < 15)
+				f_delay = 10;
+			if(f_delay >= 15 && f_delay < 20)
+				f_delay = 15;
+			if(f_delay >= 20 && f_delay < 25)
+				f_delay = 20;
+			if(f_delay >= 25 && f_delay < 30)
+				f_delay = 25;
+			if(f_delay >= 30 && f_delay < 35)
+				f_delay = 30;
+			if(f_delay >= 35 && f_delay < 40)
+				f_delay = 35;
+			if(f_delay >= 40 && f_delay < 45)
+				f_delay = 40;
+			if(f_delay >= 45 && f_delay < 50)
+				f_delay = 45;
+			if(f_delay >= 50 && f_delay < 55)
+				f_delay = 50;
+			if(f_delay >= 55 && f_delay < 60)
+				f_delay = 55;
 
 			return f_delay;
 		}
@@ -977,16 +1020,16 @@ int ODFfmpegSource::video_refresh_timer_next(char *dataBuff, int pboIndex, doubl
 	//			return -1*50;
 	//		}
 
-	//	if(decoderReachedEnd)
-	//	{
-	//#ifdef USE_ODBASE
-	//			state->pictqMutex.release();
-	//#else
-	//			ReleaseMutex(state->pictqMutex);
-	//#endif
-	//		//printf(")))video_refresh_timer_next - decoder reached end is -50\n\n");
-	//		return -50;
-	//	}
+		if(decoderReachedEnd)
+		{
+	#ifdef USE_ODBASE
+				state->pictqMutex.release();
+	#else
+				ReleaseMutex(state->pictqMutex);
+	#endif
+			//printf(")))video_refresh_timer_next - decoder reached end is -50\n\n");
+			return -50;
+		}
 
 
 			//state->pictqSemaphore.signal();	
@@ -1555,6 +1598,7 @@ ODFfmpegSource::State::State(ODFfmpegSource* parent) :
 	video_clock = 0.0;
 
 	quit = false;
+	isPaused = false;
 
 	//GlobalLastPresentationTime_ = (AV_NOPTS_VALUE);
 
@@ -1631,6 +1675,8 @@ ODFfmpegSource::ODFfmpegSource(const std::string& name,
 
 	//state->desiredRawFormat_ = PIX_FMT_YUV420P;
 
+	decoderReachedEnd = false;
+
 
 	numChannels_ = 2;
     // For now, assume all video data types are 8-bit unsigned.
@@ -1684,6 +1730,7 @@ bool ODFfmpegSource::open(const std::string& videoFileName)
 #endif
 	{
 	    printf("Could not open video file '%s'", videoFileName_.c_str());
+		return false;
 	}
 
 	// Get info on the various streams (e.g. audio and video) inside the file.
@@ -1821,16 +1868,7 @@ bool ODFfmpegSource::open(const std::string& videoFileName)
 		//	state->codecCtx_->active_thread_type = FF_THREAD_SLICE;
 		//state->codecCtx_->thread_count       = 0; // 0 = auto
 
-		printf("Codec Capabilities:\n");
-		switch (state->codec_->capabilities & (CODEC_CAP_FRAME_THREADS | CODEC_CAP_SLICE_THREADS | CODEC_CAP_DELAY)) {
-			//case CODEC_CAP_FRAME_THREADS | CODEC_CAP_SLICE_THREADS: printf("Frame and Slice"); break;
-			case CODEC_CAP_FRAME_THREADS: printf("Frame"); break;
-			case CODEC_CAP_SLICE_THREADS: printf("Slice"); break;
-			case CODEC_CAP_DELAY:		  printf("Cap delay"); break;
-			default:                      printf("No multithreading methods supported"); break;
-		}
-
-
+		printf("Codec threading capabilities:\n");
 		if(state->codec_->capabilities & CODEC_CAP_FRAME_THREADS)
 			printf("Frame\n");
 		if(state->codec_->capabilities & CODEC_CAP_SLICE_THREADS)
@@ -2577,17 +2615,25 @@ bool ODFfmpegSource::advanceFrame(int numFrames)
 #endif
 
 #if 1
-/* Check if audio/video queues are full or if the video is at the end.
- */
-bool ODFfmpegSource::queuesFull()
+void ODFfmpegSource::togglePause()
 {
-	if(state->audioq.size > MAX_AUDIOQ_SIZE || state->videoq.size > MAX_VIDEOQ_SIZE || atVideoEnd_)
-	{
-		//Sleep(10);
-		return true;
-	}
-	return false;
+	state->isPaused = !state->isPaused;
 }
+
+//bool ODFfmpegSource::quit()
+//{
+//	return state->quit;
+//}
+//
+///* Check if audio/video queues are full, if the video is paused or at the end.
+// */
+//bool ODFfmpegSource::queuesFull()
+//{
+//	if(state->audioq.size > MAX_AUDIOQ_SIZE || state->videoq.size > MAX_VIDEOQ_SIZE || atVideoEnd_ || state->isPaused)
+//		return true;
+//	
+//	return false;
+//}
 
 #pragma region READ_PACKET_ADVANCE_FRAME
 bool ODFfmpegSource::advanceFrame(int numFrames)
@@ -2600,9 +2646,14 @@ bool ODFfmpegSource::advanceFrame(int numFrames)
 	if (state->quit)
 		return false;
 	//if (atVideoEnd_)
-		//Sleep(10);
 		//return false;
-		
+
+	// Check if audio/video queues are full, if the video is paused or at the end.
+	if(state->audioq.size > MAX_AUDIOQ_SIZE || state->videoq.size > MAX_VIDEOQ_SIZE || atVideoEnd_ || state->isPaused)
+	{
+		Sleep(10);
+		return true;
+	}
 		
 	if(state->seek_req == 1)
 	{
@@ -2708,7 +2759,8 @@ bool ODFfmpegSource::advanceFrame(int numFrames)
 	}
 	else
 	{
-		if(advan == AVERROR_EOF)
+		
+		if(advan == AVERROR_EOF || url_feof(state->formatCtx_->pb))
 		{
 			if(!atVideoEnd_)
 			{
@@ -2726,12 +2778,9 @@ bool ODFfmpegSource::advanceFrame(int numFrames)
 		av_strerror(advan, errbuf, 128);
 		//if(url_ferror(state->formatCtx_->pb) == 0)
 		if (state->formatCtx_->pb && state->formatCtx_->pb->error)
-		{
 			return false;
-			//Sleep(10); /* no error; wait for user input */
-		}
 		else
-			return true;
+			return true; /* no error; wait for user input */
 	}
 
 	return true;
@@ -2739,7 +2788,7 @@ bool ODFfmpegSource::advanceFrame(int numFrames)
 #pragma endregion
 
 #pragma region DECODE_VIDEO_FRAME
-int ODFfmpegSource::decodeVideoFrame()
+bool ODFfmpegSource::decodeVideoFrame()
 {
     //if (atVideoEnd_)
 	//	return false;
@@ -2785,7 +2834,7 @@ int ODFfmpegSource::decodeVideoFrame()
 		if(packet.data == end_pkt.data) {
 			printf("Videoq pkq = END\n");
 
-			//decoderReachedEnd = true;
+			decoderReachedEnd = true;
 			//return true;
 
 			//clearQueuedFrames();

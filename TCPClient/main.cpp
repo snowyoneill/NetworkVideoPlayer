@@ -43,6 +43,8 @@ using namespace std;
 	#include "glfont.h"
 	GLFont* Font;
 #endif
+
+void drawInitialText();
 // ---------------------------------------------------------------
 
 extern int pboMode;
@@ -193,6 +195,8 @@ void ReSizeGLScene(GLsizei width, GLsizei height)
 
 	fbowidth = width;
 	fboheight = height;
+
+	drawInitialText();
 }
 
 #ifndef USE_GLEW
@@ -533,6 +537,8 @@ int InitGL()
 	{
 		printf("Init GL err.\n");
 	}
+
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	//plain.Load("Content/shaders/plain.vert","Content/shaders/plain.frag");
 	//blend.Load("Content/shaders/blend.vert","Content/shaders/blend.frag");
@@ -933,7 +939,6 @@ int Init(char* cmdline)
 
 void drawInitialText()
 {
-#ifdef USE_FREETYPE_FONTS
     // create an array of display tips
     const int cOptions = 8;
     std::string helpText[cOptions] = { 
@@ -947,10 +952,20 @@ void drawInitialText()
 						 "E = Exit or VK_ESCAPE."
             };
 
+#ifdef USE_FREETYPE_FONTS
 	wchar_t dText[256];
     /* Where to start printing on screen */
     vec2 pen = {0,0};
     vec4 black = {1,1,1,1};
+
+	if(!text_buffer)
+		return;
+
+	if(!text_buffer2)
+		return;
+
+	vertex_buffer_clear(text_buffer);
+	vertex_buffer_clear(text_buffer2);
 
 	float oPosition = 20.0;
 	/* Add text tothe buffer (see demo-font.c for the add_text code) */
@@ -1041,6 +1056,23 @@ void drawInitialText()
 	pen.y += ly;
 	swprintf (dText, 256, L"%s", L"System -> VIDEO_AUDIO_SYNC:");
 	freetype_add_text( text_buffer, font, dText, &black, &pen );
+
+	//--------------------------------------------------------------------
+
+	pen.x = 20.0f;
+	pen.y = fboheight-25;
+	swprintf (dText, 256, L"System -> currentVideo: ");
+	freetype_add_text( text_buffer2, font, dText, &black, &pen );
+
+	pen.x = 20.0f;
+	pen.y = fboheight-10;
+#ifdef NETWORKED_AUDIO
+	swprintf (dText, 256, L"System -> inwidth: %d - inheight: %d - FPS: %f - Time: %f / %f", inwidth[currentVideo], inheight[currentVideo], fps[currentVideo], 0, duration[currentVideo]);
+#else
+	swprintf (dText, 256, L"System -> inwidth: %d - inheight: %d - FPS: %f - Time: AL: %09.4f G:%09.4f / %09.4f", inwidth[currentVideo], inheight[currentVideo], fps[currentVideo], getOpenALAudioClock(currentVideo), currGlobalTimer[currentVideo], duration[currentVideo]);
+#endif
+	freetype_add_text( text_buffer2, font, dText, &black, &pen );
+
 #endif
 }
 
@@ -1273,7 +1305,7 @@ void checkMouse()
  */
 void printVideoDebugInfo(int side, int lx, int ly)
 {
-	double curTime = currGlobalTimer[side]+diff[side];
+	double curTime = g_newClock[side];//currGlobalTimer[side]+diff[side];
 
 #ifdef WGL_FONTS
 			glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
@@ -1386,7 +1418,9 @@ void printVideoDebugInfo(int side, int lx, int ly)
 	pen.y = 20.0f;
 
 #if 0
-
+	/*
+	 * Draw string text
+	 */
 	pen.x += lx;
 	pen.y += ly;
 	swprintf (dText, 256, L"%s", L"System -> FPS:", currFPS);
@@ -1460,7 +1494,9 @@ void printVideoDebugInfo(int side, int lx, int ly)
 	freetype_add_text( text_buffer2, font, dText, &black, &pen );
 #endif
 	// -----------------------------------------------------------
-
+	/*
+	 * Draw values
+	 */
 	pen.x = fbowidth-90.0f;
 	pen.y = 20.0f;
 	pen.x += lx;
@@ -1525,12 +1561,18 @@ void printVideoDebugInfo(int side, int lx, int ly)
 	freetype_add_text( text_buffer2, font, dText, &black, &pen );
 
 	// -----------------------------------------------------------
-
+#if 1
 	pen.x = 20.0f;
 	pen.y = fboheight-25;
 	swprintf (dText, 256, L"System -> currentVideo: %d", currentVideo);
 	freetype_add_text( text_buffer2, font, dText, &black, &pen );
-
+#endif
+#if 0
+	pen.x = 220.0f;
+	pen.y = fboheight-25;
+	swprintf (dText, 256, L"%d", currentVideo);
+	freetype_add_text( text_buffer2, font, dText, &black, &pen );
+#endif
 	pen.x = 20.0f;
 	pen.y = fboheight-10;
 #ifdef NETWORKED_AUDIO
@@ -1539,9 +1581,9 @@ void printVideoDebugInfo(int side, int lx, int ly)
 	swprintf (dText, 256, L"System -> inwidth: %d - inheight: %d - FPS: %f - Time: AL: %09.4f G:%09.4f / %09.4f", inwidth[currentVideo], inheight[currentVideo], fps[currentVideo], getOpenALAudioClock(currentVideo), currGlobalTimer[currentVideo], duration[currentVideo]);
 #endif
 	freetype_add_text( text_buffer2, font, dText, &black, &pen );
-
 #endif
 }
+
 
 /* Main draw loop.
  */
@@ -1570,7 +1612,7 @@ void DrawGLScene()
 	glClear(GL_COLOR_BUFFER_BIT);
 	int vOffset = 40;
 
-	glColor4f(1, 1, 1, 1.0);
+	//glColor4f(1, 1, 1, 1.0);
 	glEnable(GL_TEXTURE_2D);
 	//glBindTexture(GL_TEXTURE_2D, framebuffer);
 	#ifdef VIDEO_PLAYBACK
@@ -1580,97 +1622,103 @@ void DrawGLScene()
 		updateVideo();
 	#endif
 
-	// Draw video texture
-#if MAXSTREAMS==1
-	if(status[0] == astop)
-		glColor4f(0, 0, 0, 1.0);
-	glBindTexture(GL_TEXTURE_2D, videotextures[0]);
-	glBegin(GL_QUADS);
-		glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  vOffset);
-		glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , vOffset);
-		glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight-vOffset);
-		glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
-	glEnd();
-#endif		
-#if MAXSTREAMS==2
-	if(status[0] == astop)
-		glColor4f(0, 0, 0, 1.0);
-	glBindTexture(GL_TEXTURE_2D, videotextures[0]);
-	glBegin(GL_QUADS);
-		glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  vOffset);
-		glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2 , vOffset);
-		glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
-		glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
-	glEnd();
-
-	glColor4f(1, 1, 1, 1.0);
-	if(status[1] == astop)
-		glColor4f(0, 0, 0, 1.0);
-	glBindTexture(GL_TEXTURE_2D, videotextures[1]);
-	glBegin(GL_QUADS);
-		glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  vOffset);
-		glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , vOffset);
-		glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight-vOffset);
-		glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
-	glEnd();
-#endif
-#if MAXSTREAMS==4
-	//printf("fullScreenVideo: %d\n", fullScreenVideo );
 	if(!fullScreenVideo)
 	{
-		if(status[0] == astop)
-			glColor4f(0, 0, 0, 1.0);
-		glBindTexture(GL_TEXTURE_2D, videotextures[0]);
-		glBegin(GL_QUADS);
+		// Draw video texture
+	#if MAXSTREAMS==1
+		if(status[0] != astop)
 		{
-			glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  vOffset);
-			glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2 , vOffset);
-			glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight/2);
-			glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight/2);
+			glBindTexture(GL_TEXTURE_2D, videotextures[0]);
+			glBegin(GL_QUADS);
+				glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  vOffset);
+				glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , vOffset);
+				glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight-vOffset);
+				glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
+			glEnd();
 		}
-		glEnd();
+	#endif		
+	#if MAXSTREAMS==2
+		if(status[0] != astop)
+		{
+			glBindTexture(GL_TEXTURE_2D, videotextures[0]);
+			glBegin(GL_QUADS);
+				glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  vOffset);
+				glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2 , vOffset);
+				glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
+				glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
+			glEnd();
+		}
 
-		glColor4f(1, 1, 1, 1.0);
-		if(status[1] == astop)
-			glColor4f(0, 0, 0, 1.0);
-		glBindTexture(GL_TEXTURE_2D, videotextures[1]);
-		glBegin(GL_QUADS);
+		if(status[1] != astop)
 		{
-			glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  vOffset);
-			glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , vOffset);
-			glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight/2);
-			glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight/2);
+			glBindTexture(GL_TEXTURE_2D, videotextures[1]);
+			glBegin(GL_QUADS);
+				glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  vOffset);
+				glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , vOffset);
+				glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight-vOffset);
+				glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
+			glEnd();
 		}
-		glEnd();
+	#endif
+	#if MAXSTREAMS==4
+		//printf("fullScreenVideo: %d\n", fullScreenVideo );
+		if(!fullScreenVideo)
+		{
+			if(status[0] != astop)
+			{
+				glBindTexture(GL_TEXTURE_2D, videotextures[0]);
+				glBegin(GL_QUADS);
+				{
+					glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  vOffset);
+					glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2 , vOffset);
+					glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight/2);
+					glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight/2);
+				}
+				glEnd();
+			}
 
-		glColor4f(1, 1, 1, 1.0);
-		if(status[2] == astop)
-			glColor4f(0, 0, 0, 1.0);
-		glBindTexture(GL_TEXTURE_2D, videotextures[2]);
-		glBegin(GL_QUADS);
-		{
-			glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  fboheight/2);
-			glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2, fboheight/2);
-			glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
-			glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
-		}
-		glEnd();
+			if(status[1] != astop)
+			{
+				glBindTexture(GL_TEXTURE_2D, videotextures[1]);
+				glBegin(GL_QUADS);
+				{
+					glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  vOffset);
+					glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , vOffset);
+					glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight/2);
+					glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight/2);
+				}
+				glEnd();
+			}
 
-		glColor4f(1, 1, 1, 1.0);
-		if(status[3] == astop)
-			glColor4f(0, 0, 0, 1.0);
-		glBindTexture(GL_TEXTURE_2D, videotextures[3]);
-		glBegin(GL_QUADS);
-		{
-			glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  fboheight/2);
-			glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , fboheight/2);
-			glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight-vOffset);
-			glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
+			if(status[2] != astop)
+			{
+				glBindTexture(GL_TEXTURE_2D, videotextures[2]);
+				glBegin(GL_QUADS);
+				{
+					glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  fboheight/2);
+					glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2, fboheight/2);
+					glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
+					glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
+				}
+				glEnd();
+			}
+
+			if(status[3] != astop)
+			{
+				glBindTexture(GL_TEXTURE_2D, videotextures[3]);
+				glBegin(GL_QUADS);
+				{
+					glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  fboheight/2);
+					glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , fboheight/2);
+					glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight-vOffset);
+					glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
+				}
+				glEnd();
+			}
 		}
-		glEnd();
+		//glDisable(GL_TEXTURE_2D);
+	#endif
 	}
-	//glDisable(GL_TEXTURE_2D);
-#endif
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////// Draw background logo texture ////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1678,7 +1726,7 @@ void DrawGLScene()
 	// Draw background texture
 	if(!fullScreenVideo)
 	{
-		glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+		//glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 		//glEnable(GL_TEXTURE_2D);
 		glBindTexture(GL_TEXTURE_2D, bgTexture);
 #if MAXSTREAMS==1
@@ -1762,13 +1810,14 @@ void DrawGLScene()
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
 	///////////////////////////// Draw fullscreen video texture ////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
-	if(status[0] == astop && status[1] == astop && status[2] == astop && status[3] == astop)
-		fullScreenVideo = false;
+	
+	//if(status[0] == astop && status[1] == astop && status[2] == astop && status[3] == astop)
+	//	fullScreenVideo = false;
 
 	// Draw current video fullscreen
 	if(fullScreenVideo && status[currentVideo] != astop)
 	{
-		glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+		//glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 
 		glBindTexture(GL_TEXTURE_2D, videotextures[currentVideo]);
 		glBegin(GL_QUADS);
@@ -1789,20 +1838,24 @@ void DrawGLScene()
 	// Draw test time test pattern.
 	if(/*fullScreenVideo && */testPattern && status[currentVideo] != astop)
 	{
-		glColor4f(0.0f, 0.0f, 0.0f, 0.0f);
-		glBegin(GL_QUADS);
-			glVertex2i(fbowidth, 0);
-			glVertex2i(fbowidth, fboheight);
-			glVertex2i(0, fboheight);
-			glVertex2i(0, 0);
-		glEnd();
+		//glColor4f(0.0f, 0.0f, 0.0f, 0.0f);
+		//glBegin(GL_QUADS);
+		//	glVertex2i(fbowidth, 0);
+		//	glVertex2i(fbowidth, fboheight);
+		//	glVertex2i(0, fboheight);
+		//	glVertex2i(0, 0);
+		//glEnd();
 
 		glEnable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-		glColor4f(0.0,1.0,1.0,1.0); // half transparency
+		glColor4f(0.0,1.0,1.0,0.75); // half transparency
 
-		double curTime = currGlobalTimer[currentVideo]+diff[currentVideo];
+		double curTime = currGlobalTimer[currentVideo]+diff[currentVideo]+frameTimeDiff[currentVideo];
+		//curTime = g_netAudioClock[currentVideo];
+		//curTime = pts[currentVideo];
+		curTime = g_newClock[currentVideo];
+
 		float percent = curTime / duration[currentVideo];
 
 		int barWidth = fbowidth / 10;
@@ -1827,7 +1880,7 @@ void DrawGLScene()
 			glVertex2i(barWidth * int(ceil(fbowidth*offset)/barWidth), 0);
 		glEnd();
 
-		glColor4f(1.0,1.0,1.0,1.0);
+		//glColor4f(1.0,1.0,1.0,1.0);
 
 		for(int i=0; i<10; i++)
 		{
@@ -1880,7 +1933,7 @@ void DrawGLScene()
 		//	glVertex2i(fbowidth,fboheight);
 		//glEnd();
 
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		// Draw debug info background quad
 		glColor4f(0.0,0.0,0.0,0.5); // half transparency
 		glBegin(GL_QUADS);
@@ -1903,53 +1956,6 @@ void DrawGLScene()
 			glVertex2i(fbowidth,fboheight-40);
 			glVertex2i(fbowidth,fboheight);
 		glEnd();
-
-		//glEnable(GL_BLEND);
-		//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-		//glColor4f(1.0,1.0,1.0,0.25); // half transparency
-		//glBegin(GL_QUADS);
-		//	glVertex2i(fbowidth, fboheight);
-		//	glVertex2i(fbowidth, fboheight - 40);
-		//	glVertex2i(0, fboheight - 40);
-		//	glVertex2i(0, fboheight);
-		//glEnd();
-
-
-		/* Draw a horizontal bar representing the current position of the specified video source.
-		 */
-		double curTime = currGlobalTimer[currentVideo]+diff[currentVideo];
-		float percent = curTime / duration[currentVideo];
-
-		// Draw AUDIO_VIDEO_SYNC status
-		//glColor4f(1.0,0.0,0.0,0.75);
-		glColor4f(0.0,0.0,1.0,0.75);
-		//if(curTime - pts[currentVideo] < 0.01)
-		//if(nextFrameDelay[currentVideo] > 1.0 && status[currentVideo] == aplay)
-		if(((nextFrameDelay[currentVideo] < (1 / fps[currentVideo] * 1000 * 1.5)) && (nextFrameDelay[currentVideo] > (1 / fps[currentVideo] * 1000 * 0.5))) && status[currentVideo] == aplay)
-			glColor4f(0.0,1.0,0.0,0.75);
-			//glColor4f(0.0,0.0,1.0,0.75);
-		//printf("%f - %f\n", (1 / fps[currentVideo] * 1000 * 1.25), (1 / fps[currentVideo] * 1000 * 0.75));
-
-		glBegin(GL_QUADS);
-			glVertex2i(fbowidth-10,145);
-			glVertex2i(fbowidth-10, 155);
-			glVertex2i(fbowidth-20,155);
-			glVertex2i(fbowidth-20,145);
-		glEnd();
-
-		// Draw horizontal position bar
-		//glColor4f(1.0,1.0,1.0,0.20);
-		glBegin(GL_QUADS);
-			glVertex2i(ceil(fbowidth*percent), fboheight);
-			glVertex2i(ceil(fbowidth*percent), fboheight - 40);
-			glVertex2i(0, fboheight - 40);
-			glVertex2i(0, fboheight);
-		glEnd();
-
-		glColor4f(0.0f, 0.0f, 0.0f, 0.5f);
-		//glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-		//glDisable(GL_BLEND);
 
 		// Draw pause semi transparent textures
 		if(!fullScreenVideo)
@@ -2037,14 +2043,53 @@ void DrawGLScene()
 			}
 		}
 
+		/* Draw a horizontal bar representing the current position of the specified video source.
+		 */
+		double curTime = currGlobalTimer[currentVideo]+diff[currentVideo];
+		float percent = curTime / duration[currentVideo];
+
+		// Draw AUDIO_VIDEO_SYNC status
+		//glColor4f(1.0,0.0,0.0,0.75);
+		//glColor4f(0.0,1.0,0.0,0.25);
+
+		//if(curTime - pts[currentVideo] < 0.01)
+		//if(nextFrameDelay[currentVideo] > 1.0 && status[currentVideo] == aplay)
+		if(((nextFrameDelay[currentVideo] < (1 / fps[currentVideo] * 1000 * 1.5)) && (nextFrameDelay[currentVideo] > (1 / fps[currentVideo] * 1000 * 0.5))) && status[currentVideo] == aplay)
+			glColor4f(0.0,1.0,0.0,0.75);
+			//glColor4f(0.0,0.0,1.0,0.75);
+		//printf("%f - %f\n", (1 / fps[currentVideo] * 1000 * 1.25), (1 / fps[currentVideo] * 1000 * 0.75));
+
+		glBegin(GL_QUADS);
+			glVertex2i(fbowidth-10,145);
+			glVertex2i(fbowidth-10,155);
+			glVertex2i(fbowidth-20,155);
+			glVertex2i(fbowidth-20,145);
+		glEnd();
+
+		// Draw horizontal position bar
+		//glColor4f(1.0,1.0,1.0,0.20);
+		glBegin(GL_QUADS);
+			glVertex2i(ceil(fbowidth*percent), fboheight);
+			glVertex2i(ceil(fbowidth*percent), fboheight - 40);
+			glVertex2i(0, fboheight - 40);
+			glVertex2i(0, fboheight);
+		glEnd();
+
 		glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-		glEnable(GL_TEXTURE_2D);
-		glDisable(GL_BLEND);
+		//glEnable(GL_TEXTURE_2D);
+		//glDisable(GL_BLEND);
 #endif
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////// Draw fonts  /////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+		static double textTimeDif = 0;
+		textTimeDif += getGlobalVideoTimer(currentVideo);
+		if(textTimeDif >= 1000/fps[currentVideo])
+		{
+			textTimeDif = textTimeDif-getGlobalVideoTimer(currentVideo);
+			//printf("textTimeDif: %f\n", textTimeDif);
 
 #if 1
 #ifdef USE_FREETYPE_FONTS
@@ -2132,12 +2177,17 @@ void DrawGLScene()
 			}
 		}
 #endif
-		// Print the currently selected video debug info.
-		printVideoDebugInfo(currentVideo, 0, 0);
+
+			// Print the currently selected video debug info.
+			printVideoDebugInfo(currentVideo, 0, 0);
+
+		}
+		//else
+		//	printf("Underrun\n");
 
 #ifdef USE_FREETYPE_FONTS
-		glEnable( GL_BLEND );
-		glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
+		//glEnable( GL_BLEND );
+		//glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
 		glEnable( GL_TEXTURE_2D );
 		glBindTexture( GL_TEXTURE_2D, atlas->id );
 		//glBegin(GL_QUADS);
@@ -2147,7 +2197,7 @@ void DrawGLScene()
 		//	glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight);
 		//glEnd();
 		vertex_buffer_render( text_buffer, GL_TRIANGLES, "vt" );
-		vertex_buffer_render( text_buffer2, GL_TRIANGLES, "vtc" );
+		vertex_buffer_render( text_buffer2, GL_TRIANGLES, "vt" );
 
 		glBindTexture( GL_TEXTURE_2D, 0);
 		glDisable( GL_TEXTURE_2D );
@@ -2169,17 +2219,10 @@ void DrawGLScene()
 	//glFinish();
 	CalculateFrameRate();
 	//wglMakeCurrent(NULL, NULL);
-
-	GLenum err = glGetError();
-	if(err != GL_NO_ERROR)
-	{
-		printf("DrawScene GL err - %s.\n", gluErrorString(err));
-	}
-	//Sleep(5);
 #endif
-
-	//glClear(GL_COLOR_BUFFER_BIT);
+	
 #if 0
+	//glClear(GL_COLOR_BUFFER_BIT);
 	//glDisable(GL_TEXTURE_2D);
 	glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 	//glEnable(GL_TEXTURE_2D);
@@ -2193,26 +2236,67 @@ void DrawGLScene()
 
 	//	CalculateFrameRate();
 	//printf("\tFPS: %d\n", currFPS);
-
-	GLenum err = glGetError();
-	if(err != GL_NO_ERROR)
-	{
-		printf("DrawScene GL err.\n");
-	}
 #endif
 
+	if(enableDebugOutput)
+	{
+		GLenum err = glGetError();
+		if(err != GL_NO_ERROR)
+		{
+			printf("DrawScene GL err - %s.\n", gluErrorString(err));
+		}
+	}
 
 	double timeBeforeSwapTime = getGlobalVideoTimer(currentVideo) - profileTime;
-
 	SwapBuffers(getHDC());
 	//glFinish();
-
 	double timeAfterSwapTime = getGlobalVideoTimer(currentVideo) - profileTime;
 	//if(status[currentVideo] == aplay)
-	//	printf("TOTAL Time: %09.6f - WORK TIME: %09.6f - SWAP Time: %09.6f\n", timeAfterSwapTime, timeBeforeSwapTime, timeAfterSwapTime - timeBeforeSwapTime);
+		//printf("TOTAL Time: %09.6f - WORK TIME: %09.6f - SWAP Time: %09.6f\n", timeAfterSwapTime, timeBeforeSwapTime, timeAfterSwapTime - timeBeforeSwapTime);
 
 	//if(timeAfterSwapTime > (1000 / 60.0)+1 )
-		//printf("=======================Missed V-SYNC\n");
+	//	printf("=======================Missed V-SYNC\n");
+
+/*
+	if(!enableVSync)
+	{
+		int target = int(ceil(fps[currentVideo]));
+		target *= 2;
+		target = (target < 200) ? 200 : target;
+		//printf("target: %d\n", target);
+		float minFrameTime = 1000/float(target);
+		static float lastTime = 0.0f;
+		static float thisTime   = 0.0f;
+		float deltaTime	= 0.0f;
+
+		//calculate time taken to render last frame (and assume the next will be similar)
+		float currentTime = getGlobalVideoTimer(currentVideo);//GetTickCount();
+		deltaTime = thisTime - lastTime;
+		lastTime = thisTime;
+
+		//limit framerate by sleeping. a sleep call is never really that accurate
+		if (minFrameTime > 0)
+		{
+			float sleepTime = minFrameTime - deltaTime; //add difference to desired deltaTime
+			sleepTime = max(sleepTime, 0); //negative sleeping won't make it go faster :(
+			//printf("SleepTime: %f\n", sleepTime);
+			Sleep(sleepTime);
+		}
+	}
+*/
+
+//static double timestep = 1000/30;
+//static unsigned int t_accum=0,lt=0,ct=0,t=0;
+//
+//    ct = getGlobalVideoTimer(currentVideo);
+//    t_accum += ct - lt;
+//    lt = ct;
+//    while(t_accum >= timestep){
+//        t += timestep; /* this is our actual time, in milliseconds. */
+//        t_accum -= timestep;
+//	}
+
+
 }
 
 #ifdef WGL_FONTS
@@ -2529,6 +2613,7 @@ void shutdownPlayer()
 		//stopAudioThread = true;
 		while(stopAudioThread == true) { 
 			printf("Waiting for audio thread to shutdown...");
+			closeAudioEnv();
 			Sleep(100);
 		}
 	#endif

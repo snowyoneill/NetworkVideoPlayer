@@ -1,6 +1,6 @@
 #pragma once
 
-#define MAXSTREAMS 4
+#define MAXSTREAMS 1
 #define USE_CIMAGE
 //#define USE_ODBASE
 #define USE_GLEW

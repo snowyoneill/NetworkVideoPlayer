@@ -196,6 +196,3 @@ void upKeyHandle(char key);
 bool loadBG();
 void shutdownPlayer();
 void setWindowTitle(int clientID, string text);
-
-extern void notifyStopOrRestartVideo(int videounit);
-extern void notifyScreenSyncLoadVideo(string videoName, int videounit);

@@ -175,7 +175,7 @@ struct ODFfmpegSource
     bool advanceFrame(int numFrames = 1);
 
 
-	int decodeVideoFrame();
+	bool decodeVideoFrame();
 	int vid_packet_queue_put(PacketQueue *q, AVPacket *pkt);
 	int vid_packet_queue_get(PacketQueue *q, AVPacket *pkt);
 
@@ -215,6 +215,9 @@ struct ODFfmpegSource
 	bool queuesFull();
 
 	double video_pts();
+
+	//bool quit();
+	void togglePause();
 
     // Hidden internal state.
     struct State;

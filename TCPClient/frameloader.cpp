@@ -48,7 +48,9 @@ typedef struct {
 ODBase::Lock openALStreamLock[MAXSTREAMS];//("audioStreamLock");
 ODBase::Lock videoStreamLock[MAXSTREAMS];//("videoStreamLock");
 #else
+#ifdef OPENAL_ENV
 HANDLE openALStreamLock[MAXSTREAMS];// = CreateMutex(NULL, false, NULL);
+#endif
 HANDLE videoStreamLock[MAXSTREAMS];// = CreateMutex(NULL, false, NULL);
 #endif
 
@@ -349,6 +351,11 @@ double getFFmpeg(int side)
 void setALVolume(int side, float level)
 {
 	openALEnv->setVolume(side, level);
+}
+
+void stopAudioDecoder()
+{
+	stopAudioThread = true;
 }
 
 void decodeAndPlayAllAudioStreams(void* dummy)
@@ -783,7 +790,9 @@ void registerFFmpeg()
 #ifndef USE_ODBASE
 	for(int i=0; i<MAXSTREAMS; i++)
 	{
+#ifdef OPENAL_ENV
 		openALStreamLock[i] = CreateMutex(NULL, false, NULL);
+#endif
 		videoStreamLock[i] = CreateMutex(NULL, false, NULL);		
 	}
 #endif
@@ -797,7 +806,7 @@ void registerFFmpeg()
 bool loadVideoFrames(const char * mediapath,double & last_frame, double & fps, int & inputwidth, int & inputheight, __int64 side)
 {
 	bool ret = false;
-#if 1 // This was used to force the program to a single core to prevent incorrect pts timestamps
+#if 0 // This was used to force the program to a single core to prevent incorrect pts timestamps
 	// for being generated when the decoder used to use the packets pts (depreciated) instead of
 	// the frames pts.
 	DWORD_PTR threadAffMask = SetThreadAffinityMask(GetCurrentThread()/*timer->timerThread*/, core);
@@ -899,6 +908,12 @@ bool loadVideoFrames(const char * mediapath,double & last_frame, double & fps, i
 						char buf[256];
 						sprintf(buf, "Could not read video file %s.", mediapath);
 						MessageBox(NULL, buf, "Error", NULL);
+
+						videoSources[side]->close();
+						delete videoSources[side];
+						videoSources[side] = NULL;
+						videoFinished[side] = false;
+
 						//throw ODBase::ErrorEvent("Could not read video file '%s'", videoFileName);
 					}
 				}
@@ -918,7 +933,7 @@ bool loadVideoFrames(const char * mediapath,double & last_frame, double & fps, i
 #else
 	ReleaseMutex(videoStreamLock[side]);
 #endif
-#if 1
+#if 0
 	if(!SetProcessAffinityMask(process, p_processAffinityMask))
 			printf("Couldn't set Process Affinity Mask\n\n");
 
@@ -957,6 +972,27 @@ void seekVideoThread(int side, double clock, double seekDuration)
 }
 /* Shutdown the specified video stream.
  */
+
+void pauseFrameReader(int side)
+{
+#ifdef USE_ODBASE
+	videoStreamLock[side].grab();
+#else
+	WaitForSingleObject(videoStreamLock[side], INFINITE);
+#endif
+	if(videoSources[side] != NULL)
+	{
+		videoSources[side]->togglePause();
+	}
+	else
+		printf("videoSources[%d] == NULL\n", side);
+#ifdef USE_ODBASE
+	videoStreamLock[side].release();
+#else
+	ReleaseMutex(videoStreamLock[side]);
+#endif	
+}
+
 void closeVideoThread(int side)
 {
 #ifdef USE_ODBASE
@@ -998,31 +1034,36 @@ void frameReader(void * parg)
 	//ReleaseSemaphore(args->readerSemaphore, 1, NULL );
 	printf("--Start FP thread %d.\n", side);
 
-	bool finished = false;
+	//bool finished = false;
 	//do
 	//while(!videoFinished[side])
-	while(!finished)
+	while(true)
 	{
 		//videoStreamLock[side].grab();
 		//if(videoFinished[side])
 		//	finished = true;
 		//videoStreamLock[side].release();
+#if 0
+			if(localVideoSource->quit())
+				break;
 
 		//printf("FrameReader Thread - side: %d\n", side);
 			if(localVideoSource->queuesFull())
 			{
 				//printf("Frame reader thread sleeping...\n");
 				Sleep(10);
+				continue;
 			}
-			
-			if (localVideoSource->advanceFrame() == false)
+#endif
+			if (!(localVideoSource->advanceFrame()))
 			{
 				printf("Frame reader thread quitting...\n");
 				//Sleep(100);
-				//break;
-				finished = true;
+				break;
+				//finished = true;
 			}
-			//Sleep(10);
+
+		//Sleep(10);
 		//DWORD core = GetCurrentProcessorNumber();
 		//printf("$$$FrameReader Thread - Process Affinity: %d\n", core);
 	} // while(!finished);
@@ -1064,24 +1105,22 @@ void frameDecoder(void * parg)
 	//ReleaseSemaphore(args->readerSemaphore, 1, NULL );
 	printf("--Start FD thread %d.\n", side);
 
-	bool finished = false;
+	//bool finished = false;
 	//do
 	//while(!videoFinished[side])
-	while(!finished)
+	while(true)
 	{
 		//videoStreamLock[side].grab();
 		//if(videoFinished[side])
 		//	finished = true;
 		//videoStreamLock[side].release();
 		//printf("-FrameDecode Thread - side: %d\n", side);
-			int ret = localVideoSource->decodeVideoFrame();
-			if (ret == false)
-			//if(localVideoSource->decodeVideoFrame() == false)
+			if(!(localVideoSource->decodeVideoFrame()))
 			{
 				printf("Frame decoder thread quitting...\n");
 				//Sleep(100);
-				//break;
-				finished = true;
+				break;
+				//finished = true;
 			}
 			//printf("Frame decoder thread...\n");
 			//Sleep(100);

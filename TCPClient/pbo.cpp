@@ -34,33 +34,18 @@ int		qindex[MAXSTREAMS];
 int		pindex[MAXSTREAMS];
 
 double pboPTS[MAX_PBOS];
+void* pboRingBuff[MAX_PBOS];
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////// Timer //////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////////
-/*
-__int64 pboCounter[MAXSTREAMS];
-double PCFreqPBO = 0.0;
-void startPBOTimer(int videounit)
-{
-    LARGE_INTEGER li;
-    if(!QueryPerformanceFrequency(&li))
-        printf("QueryPerformanceFrequency failed!\n");
+int mindex[MAXSTREAMS];
+int dindex[MAXSTREAMS];
+int	draw_size[MAXSTREAMS];
 
-    PCFreqPBO = double(li.QuadPart)/1000.0;
+#ifdef USE_ODBASE
+	ODBase::Lock drawPboMutex("drawPboMutex");
+#else
+	HANDLE drawPboMutex;
+#endif
 
-    QueryPerformanceCounter(&li);
-    pboCounter[videounit] = li.QuadPart;
-}
-double getPBOTimer(int videounit)
-{
-    LARGE_INTEGER li;
-    QueryPerformanceCounter(&li);
-	double globaltimer = double(li.QuadPart-pboCounter[videounit])/PCFreqPBO;
-
-	return globaltimer;
-}
-*/
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////// PBO //////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -108,11 +93,26 @@ void intiPBOs(int w, int h, int side)
 		//pindex[side] = 0;
 		//size[side] = 0;
 	}
-	//startPBOTimer(side);
 	startGlobalVideoTimer(side);
 
-	for(int i=0; i<MAX_PBOS; i++)
-		pboPTS[i] = -1;
+	//for(int i=0; i<MAX_PBOS; i++)
+	//{
+	//	qindex[i] = 0;
+	//	pboPTS[i] = -1;
+	//	mindex[i] = 0;
+	//	dindex[i] = 0;
+	//}
+
+	for(int i=0; i<MAXSTREAMS; i++)
+	{
+		qindex[i] = 0;
+		memset(pboPTS, 0, sizeof(double)*MAX_PBOS);
+		mindex[i] = 0;
+		dindex[i] = 0;
+	}
+
+	pbo_size[side] = 0;
+	draw_size[side] = 0;
 }
 
 void updatePixels(int side, GLbyte* dst, int size)
@@ -136,7 +136,9 @@ void updatePixels(int side, GLbyte* dst, int size)
     ++color;            // scroll down
 }
 
-
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////// Synchronous PBOs //////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
 bool pbosFull(int side)
 {
 	return (pbo_size[side] < pboMode);
@@ -180,36 +182,7 @@ void updatePBOs(int side)
 		}
 		//printf("Pbo uploaded - size = %d.\n", pbo_size[side]);
 
-#if 0
-        //// start to copy from PBO to texture object ///////
-        //t1.start();
-
-		printf("nextindex: %d\n", nextIndex);
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, pboIds[side][index]);
-
-        // copy pixels from PBO to texture object
-        // Use offset instead of pointer.
-
-		static int lwidth[MAXSTREAMS] = {0};
-		static int lheight[MAXSTREAMS] = {0};
-
-		if(lwidth[side] != pbowidth[side] || lheight[side] != pboheight[side] )
-		{
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, pbowidth[side], pboheight[side], 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-		}
-		else
-			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, pbowidth[side], pboheight[side], GL_RGBA, GL_UNSIGNED_BYTE, 0);
-
-		lwidth[side] = pbowidth[side];
-		lheight[side] = pboheight[side];
-#endif
-
-        // measure the time copying data from PBO to texture object
-        //t1.stop();
-        //copyTime = t1.getElapsedTimeInMilliSec();
-        ///////////////////////////////////////////////////
-
-		double startTime = getGlobalVideoTimer(side);//getPBOTimer(side);
+		double startTime = getGlobalVideoTimer(side);
         // start to modify pixel values ///////////////////
         //t1.start();
 
@@ -259,10 +232,7 @@ void updatePBOs(int side)
             glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER); // release pointer to mapping buffer
         }
 
-        // measure the time modifying the mapped buffer
-        //t1.stop();
-        //updateTime = t1.getElapsedTimeInMilliSec();
-		double endTime = getGlobalVideoTimer(side);//getPBOTimer(side);
+		double endTime = getGlobalVideoTimer(side);
 		//printf("mod mapped buffer(ms): %f\n", (endTime-startTime));
 		//printf("\t\t\t\tUPLOADTime: %f\n", (endTime-startTime));
         ///////////////////////////////////////////////////
@@ -291,12 +261,14 @@ void updatePBOs(int side)
 		//	index;
 
 		}
-
-		GLenum err = glGetError();
-		if(err != GL_NO_ERROR)
+		if(enableDebugOutput)
 		{
-			printf("OpenGL Error: %s (0x%x), @\n", glGetString(err), err);
-			printf("UpdatePBO GL err.\n");
+			GLenum err = glGetError();
+			if(err != GL_NO_ERROR)
+			{
+				printf("OpenGL Error: %s (0x%x), @\n", glGetString(err), err);
+				printf("UpdatePBO GL err.\n");
+			}
 		}
 
 		if(ret == -1)
@@ -382,7 +354,7 @@ void drawPBO(int side)
 			}
 		}
 
-		double startTime = getGlobalVideoTimer(side);//getPBOTimer(side);
+		double startTime = getGlobalVideoTimer(side);
 
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pboIds[side][nextIndex]);
 		//glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pboIds[side][qindex[side]]);
@@ -427,17 +399,20 @@ void drawPBO(int side)
 		}
 
 		 // measure the time copying data from PBO to texture object
-		double endTime = getGlobalVideoTimer(side);//getPBOTimer(side);
+		double endTime = getGlobalVideoTimer(side);
 		//printf("copy   pbo to tex(ms): %f\n", (endTime-startTime));
 		//printf("index: %d\n", index);
 		//printf("pindex[%d]: %d\n", side, pindex[side]);
 		//printf("pindex[%d]: %d\n", side, qindex[side]);
 
 		GLenum err = glGetError();
-		if(err != GL_NO_ERROR)
+		if(enableDebugOutput)
 		{
-			printf("OpenGL Error: %s (0x%x), @\n", glGetString(err), err);
-			printf("DrawPBO GL err.\n");
+			if(err != GL_NO_ERROR)
+			{
+				printf("OpenGL Error: %s (0x%x), @\n", glGetString(err), err);
+				printf("DrawPBO GL err.\n");
+			}
 		}
 	}
 }
@@ -445,18 +420,6 @@ void drawPBO(int side)
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////// Asynchronous PBOs //////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
-void* pboRingBuff[MAX_PBOS];
-
-int mindex[MAXSTREAMS];
-int dindex[MAXSTREAMS];
-int	draw_size[MAXSTREAMS];
-
-#ifdef USE_ODBASE
-	ODBase::Lock drawPboMutex("drawPboMutex");
-#else
-	HANDLE drawPboMutex;
-#endif
-
 void mapPBOsRingBuffer(int side)
 {
 	//for(int k=0; k<pboMode; k++)
@@ -496,12 +459,8 @@ void mapPBOsRingBuffer(int side)
         else if(pboMode > 1)
         {
 			//nextIndex = (qindex[side] + bSize) % pboMode;
-			////qindex[side] = (qindex[side] + 1) % pboMode;
-
-			
+			////qindex[side] = (qindex[side] + 1) % pboMode;		
 			nextIndex = (mindex[side] + 1) % pboMode;
-
-
 		}
 		//printf("Pbo uploaded - size = %d.\n", pbo_size[side]);
 
@@ -510,7 +469,7 @@ void mapPBOsRingBuffer(int side)
         //copyTime = t1.getElapsedTimeInMilliSec();
         ///////////////////////////////////////////////////
 
-		double startTime = getGlobalVideoTimer(side);//getPBOTimer(side);
+		double startTime = getGlobalVideoTimer(side);
         // start to modify pixel values ///////////////////
         //t1.start();
 
@@ -539,7 +498,7 @@ void mapPBOsRingBuffer(int side)
         // measure the time modifying the mapped buffer
         //t1.stop();
         //updateTime = t1.getElapsedTimeInMilliSec();
-		double endTime = getGlobalVideoTimer(side);//getPBOTimer(side);
+		double endTime = getGlobalVideoTimer(side);
 		//printf("mod mapped buffer(ms): %f\n", (endTime-startTime));
 		//printf("\t\t\t\tUPLOADTime: %f\n", (endTime-startTime));
         ///////////////////////////////////////////////////
@@ -596,11 +555,14 @@ void mapPBOsRingBuffer(int side)
 		// Once bound with 0, all pixel operations behave normal ways.
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
-		GLenum err = glGetError();
-		if(err != GL_NO_ERROR)
+		if(enableDebugOutput)
 		{
-			printf("OpenGL Error: %s (0x%x), @\n", glGetString(err), err);
-			printf("UpdatePBO GL err.\n");
+			GLenum err = glGetError();
+			if(err != GL_NO_ERROR)
+			{
+				printf("OpenGL Error: %s (0x%x), @\n", glGetString(err), err);
+				printf("UpdatePBO GL err.\n");
+			}
 		}
     }
 	}
@@ -669,7 +631,7 @@ int updatePBOsRingBuffer(int side)
         //copyTime = t1.getElapsedTimeInMilliSec();
         ///////////////////////////////////////////////////
 
-		double startTime = getGlobalVideoTimer(side);//getPBOTimer(side);
+		double startTime = getGlobalVideoTimer(side);
         // start to modify pixel values ///////////////////
         //t1.start();
 
@@ -741,7 +703,7 @@ int updatePBOsRingBuffer(int side)
         // measure the time modifying the mapped buffer
         //t1.stop();
         //updateTime = t1.getElapsedTimeInMilliSec();
-		double endTime = getGlobalVideoTimer(side);//getPBOTimer(side);
+		double endTime = getGlobalVideoTimer(side);
 		//printf("mod mapped buffer(ms): %f\n", (endTime-startTime));
 		//printf("\t\t\t\tUPLOADTime: %f\n", (endTime-startTime));
         ///////////////////////////////////////////////////
@@ -836,7 +798,7 @@ void drawPBOsRingBuffer(int side)
         //copyTime = t1.getElapsedTimeInMilliSec();
         ///////////////////////////////////////////////////
 
-		double startTime = getGlobalVideoTimer(side);//getPBOTimer(side);
+		double startTime = getGlobalVideoTimer(side);
         // start to modify pixel values ///////////////////
         //t1.start();
 
@@ -901,16 +863,18 @@ void drawPBOsRingBuffer(int side)
         // measure the time modifying the mapped buffer
         //t1.stop();
         //updateTime = t1.getElapsedTimeInMilliSec();
-		double endTime = getGlobalVideoTimer(side);//getPBOTimer(side);
+		double endTime = getGlobalVideoTimer(side);
 		//printf("mod mapped buffer(ms): %f\n", (endTime-startTime));
 		//printf("\t\t\t\tUPLOADTime: %f\n", (endTime-startTime));
         ///////////////////////////////////////////////////
-
-		GLenum err = glGetError();
-		if(err != GL_NO_ERROR)
+		if(enableDebugOutput)
 		{
-			printf("OpenGL Error: %s (0x%x), @\n", glGetString(err), err);
-			printf("DrawPBO GL err.\n");
+			GLenum err = glGetError();
+			if(err != GL_NO_ERROR)
+			{
+				printf("OpenGL Error: %s (0x%x), @\n", glGetString(err), err);
+				printf("DrawPBO GL err.\n");
+			}
 		}
     }
 }
