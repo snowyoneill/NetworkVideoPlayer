@@ -50,6 +50,7 @@ void stopAudioDecoder();
 
 ////////////////////////////////////////////// VIDEO ////////////////////////////////////////////////
 void registerFFmpeg();
+void closeFrameLoader();
 bool loadVideoFrames(const char * mediapath,double & last_frame, double & fps, int & inputwidth, int & inputheight, __int64 side);
 void seekVideoThread(int side, double clock, double incr);
 //void seekVideoThread(int side, double seekDuration);

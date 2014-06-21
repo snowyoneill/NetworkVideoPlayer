@@ -11,11 +11,9 @@
 #else
 #include "shlwapi.h"
 #endif
-#include "constants.h"
 #include <windows.h>
 #include <process.h>
 #include <string.h>
-
 
 #ifdef LOCAL_AUDIO
 #if (defined (OPENAL_ENV))
@@ -44,6 +42,14 @@ typedef struct {
 	HANDLE readerSemaphore;
 }threadArgs;
 
+#ifdef  USE_CRITICAL_SECTION
+	#ifdef OPENAL_ENV
+	CRITICAL_SECTION openALStreamLock[MAXSTREAMS];
+	#endif
+	CRITICAL_SECTION videoStreamLock[MAXSTREAMS];
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 ODBase::Lock openALStreamLock[MAXSTREAMS];//("audioStreamLock");
 ODBase::Lock videoStreamLock[MAXSTREAMS];//("videoStreamLock");
@@ -52,6 +58,7 @@ ODBase::Lock videoStreamLock[MAXSTREAMS];//("videoStreamLock");
 HANDLE openALStreamLock[MAXSTREAMS];// = CreateMutex(NULL, false, NULL);
 #endif
 HANDLE videoStreamLock[MAXSTREAMS];// = CreateMutex(NULL, false, NULL);
+#endif
 #endif
 
 ODFfmpegSource* videoSources[MAXSTREAMS];
@@ -123,28 +130,50 @@ bool initAudioSource(int side, int* bufSize)
 		int channels;
 		int type;
 		
-#ifdef USE_ODBASE
-		videoStreamLock[side].grab();
-#else
-		WaitForSingleObject(videoStreamLock[side], INFINITE);
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[side]);
 #endif
+
+#ifdef USE_MUTEX
+#ifdef USE_ODBASE
+	videoStreamLock[side].grab();
+#else
+	WaitForSingleObject(videoStreamLock[side], INFINITE);
+#endif
+#endif
+
 		if(videoSources[side] != NULL)
 		{
 			if(videoSources[side]->getAVAudioInfo(&rate, &channels, &type) != 0)
 			{
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-				videoStreamLock[side].release();
+	videoStreamLock[side].release();
 #else
-				ReleaseMutex(videoStreamLock[side]);
+	ReleaseMutex(videoStreamLock[side]);
+#endif
 #endif
 				printf("Error getting ffmpeg audio info - could not initialise audio source [%d]\n", side);
 				return false;
 			}
 		}
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-		videoStreamLock[side].release();
+	videoStreamLock[side].release();
 #else
-		ReleaseMutex(videoStreamLock[side]);
+	ReleaseMutex(videoStreamLock[side]);
+#endif
 #endif
 
 		ALenum err = alGetError();
@@ -201,17 +230,31 @@ bool initAudioSource(int side, int* bufSize)
 			data[i] = (char*) malloc(*bufSize);
 //#endif
 
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-		videoStreamLock[side].grab();
+	videoStreamLock[side].grab();
 #else
-		WaitForSingleObject(videoStreamLock[side], INFINITE);
+	WaitForSingleObject(videoStreamLock[side], INFINITE);
+#endif
 #endif
 		if(videoSources[side] == NULL)
 		{
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-			videoStreamLock[side].release();
+	videoStreamLock[side].release();
 #else
-			ReleaseMutex(videoStreamLock[side]);
+	ReleaseMutex(videoStreamLock[side]);
+#endif
 #endif
 			return false;
 		}
@@ -240,10 +283,17 @@ bool initAudioSource(int side, int* bufSize)
 					} while(count[i] == 0);
 			}
 		}
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-		videoStreamLock[side].release();
+	videoStreamLock[side].release();
 #else
-		ReleaseMutex(videoStreamLock[side]);
+	ReleaseMutex(videoStreamLock[side]);
+#endif
 #endif
 
 		audioSourceInit[side] = true;
@@ -300,20 +350,35 @@ int closeAudioStream(int side)
 {
 	if(audioSourceInit[side] == true)
 	{
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&openALStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 		openALStreamLock[side].grab();
 #else
 		WaitForSingleObject(openALStreamLock[side], INFINITE);
 #endif
+#endif
+
 		//while(openALEnv->isSourceStillPlaying(side)) { openALStreamLock[side].release(); Sleep(10); openALStreamLock[side].grab(); }
 		//if(!openALEnv->isSourceStillPlaying(side))
 		{
 			if(openALEnv->closeAudioStream(side)==0)
 			{
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&openALStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-				openALStreamLock[side].release();
+		openALStreamLock[side].release();
 #else
-				ReleaseMutex(openALStreamLock[side]);
+		ReleaseMutex(openALStreamLock[side]);
+#endif
 #endif
 				audioSourceInit[side] = false;
 				return true;
@@ -323,10 +388,17 @@ int closeAudioStream(int side)
 		}
 		//else
 		//	printf("\nAudio buffer still playing.\n");
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&openALStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 		openALStreamLock[side].release();
 #else
 		ReleaseMutex(openALStreamLock[side]);
+#endif
 #endif
 	}
 
@@ -397,10 +469,17 @@ void decodeAndPlayAllAudioStreams(void* dummy)
 		int totalActiveAudioStreams = 0;
 		for (int i=0; i<MAXSTREAMS; i++)
 		{
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&openALStreamLock[i]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-			openALStreamLock[i].grab();
+		openALStreamLock[i].grab();
 #else
-			WaitForSingleObject(openALStreamLock[i], INFINITE);
+		WaitForSingleObject(openALStreamLock[i], INFINITE);
+#endif
 #endif
 
 			//videoStreamLock[i].grab();
@@ -409,6 +488,15 @@ void decodeAndPlayAllAudioStreams(void* dummy)
 				{
 					count = -1;
 					totalActiveAudioStreams++;
+
+					if(!videoSources[i]->hasAudiostream())
+					{
+						//printf("No ffmpeg audio track detected: side[%d]\n", i);
+						totalActiveAudioStreams--;
+						
+					}
+					else
+					{
 //#ifdef PRELOAD
 					//if(initAudioSource(i))
 //#else
@@ -437,10 +525,17 @@ void decodeAndPlayAllAudioStreams(void* dummy)
 //#ifdef PRELOAD
 								if(g_preloadAudio)
 								{
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[i]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-									videoStreamLock[i].grab();
+	videoStreamLock[i].grab();
 #else
-									WaitForSingleObject(videoStreamLock[i], INFINITE);
+	WaitForSingleObject(videoStreamLock[i], INFINITE);
+#endif
 #endif
 									if(videoSources[i] != NULL)
 									{
@@ -448,10 +543,17 @@ void decodeAndPlayAllAudioStreams(void* dummy)
 										//count = videoSources[i]->getAVAudioData(data, g_bufferSize);
 										
 									}
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[i]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-									videoStreamLock[i].release();
+	videoStreamLock[i].release();
 #else
-									ReleaseMutex(videoStreamLock[i]);
+	ReleaseMutex(videoStreamLock[i]);
+#endif
 #endif
 									if(count >= 0)
 										ret = openALEnv->refillAudioBuffers(i, count, data);
@@ -461,20 +563,35 @@ void decodeAndPlayAllAudioStreams(void* dummy)
 								{
 									//printf("Refill buffers: %d\n", i);
 									char* data = (char*) malloc(bufSize[i]);
-#ifdef USE_ODBASE
-									videoStreamLock[i].grab();
-#else
-									WaitForSingleObject(videoStreamLock[i], INFINITE);
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[i]);
 #endif
+
+#ifdef USE_MUTEX
+#ifdef USE_ODBASE
+	videoStreamLock[i].grab();
+#else
+	WaitForSingleObject(videoStreamLock[i], INFINITE);
+#endif
+#endif
+
 									if(videoSources[i] != NULL)
 									{
 										//count = videoSources[i]->getAudioBuffer(data, bufSize[i]);
 										count = videoSources[i]->getAVAudioData(data, bufSize[i]);
 									}
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[i]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-									videoStreamLock[i].release();
+	videoStreamLock[i].release();
 #else
-									ReleaseMutex(videoStreamLock[i]);
+	ReleaseMutex(videoStreamLock[i]);
+#endif
 #endif
 									if(count >= 0)
 										ret = openALEnv->refillAudioBuffers(i, count, data, bufSize[i]);
@@ -509,18 +626,33 @@ void decodeAndPlayAllAudioStreams(void* dummy)
 									//videoStreamLock[i].release();
 
 									bool atEnd = false;
-#ifdef USE_ODBASE
-									videoStreamLock[i].grab();
-#else
-									WaitForSingleObject(videoStreamLock[i], INFINITE);
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[i]);
 #endif
+
+#ifdef USE_MUTEX
+#ifdef USE_ODBASE
+	videoStreamLock[i].grab();
+#else
+	WaitForSingleObject(videoStreamLock[i], INFINITE);
+#endif
+#endif
+
 									if(videoSources[i] != NULL)
 										if(videoSources[i]->atVideoEnd_)
 											atEnd = true;
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[i]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-									videoStreamLock[i].release();
+	videoStreamLock[i].release();
 #else
-									ReleaseMutex(videoStreamLock[i]);
+	ReleaseMutex(videoStreamLock[i]);
+#endif
 #endif
 
 									if(!openALEnv->isSourceStillPlaying(i))
@@ -547,14 +679,22 @@ void decodeAndPlayAllAudioStreams(void* dummy)
 						//closeVideoThread(i);
 						closeAudioStream(i);
 						//Sleep(10);
-						stopAudioThread = true;
+						//stopAudioThread = true;
+					}
 					}
 				}
 			//videoStreamLock[i].release();
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&openALStreamLock[i]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-			openALStreamLock[i].release();
+		openALStreamLock[i].release();
 #else
-			ReleaseMutex(openALStreamLock[i]);
+		ReleaseMutex(openALStreamLock[i]);
+#endif
 #endif
 		}
 		if(totalActiveAudioStreams == 0)
@@ -568,7 +708,7 @@ void decodeAndPlayAllAudioStreams(void* dummy)
 	delete openALEnv;
 
 	stopAudioThread = false;
-	printf("\n+++Closing audio decoder/player thread.\n");
+	printf("+++Closing audio decoder/player thread.\n");
 	//return 1;
 }
 #endif
@@ -781,22 +921,52 @@ void frameproducer(void * parg)
 }
 #endif
 //////////////////////////////////////////// VideoLoader //////////////////////////////////////////////
+void closeFrameLoader()
+{
+
+	for(int i=0; i<MAXSTREAMS; i++)
+	{
+		while(videoFinished[i] == true) { Sleep(10); }
+#ifdef  USE_CRITICAL_SECTION
+		DeleteCriticalSection(&videoStreamLock[i]);
+#endif
+
+#ifdef USE_MUTEX
+#ifdef USE_ODBASE
+	;//
+#else
+	CloseHandle(videoStreamLock[side]);
+#endif
+#endif
+
+	}
+
+}
+
 /* Register FFmpeg
  */
 void registerFFmpeg()
 {
 	av_register_all();
-
-#ifndef USE_ODBASE
 	for(int i=0; i<MAXSTREAMS; i++)
 	{
-#ifdef OPENAL_ENV
-		openALStreamLock[i] = CreateMutex(NULL, false, NULL);
-#endif
-		videoStreamLock[i] = CreateMutex(NULL, false, NULL);		
-	}
-#endif
 
+	#ifdef  USE_CRITICAL_SECTION
+			#ifdef OPENAL_ENV
+				InitializeCriticalSection(&openALStreamLock[i]);
+			#endif
+			InitializeCriticalSection(&videoStreamLock[i]);
+	#endif
+
+	#ifdef USE_MUTEX
+	#ifndef USE_ODBASE
+		#ifdef OPENAL_ENV
+			openALStreamLock[i] = CreateMutex(NULL, false, NULL);
+		#endif
+			videoStreamLock[i] = CreateMutex(NULL, false, NULL);
+		#endif
+	#endif
+	}
 }
 
 /* Try to load the requested video name in the supplied client ID array slot.
@@ -827,10 +997,17 @@ bool loadVideoFrames(const char * mediapath,double & last_frame, double & fps, i
 	}
 #endif
 
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].grab();
 #else
 	WaitForSingleObject(videoStreamLock[side], INFINITE);
+#endif
 #endif
 	if(videoSources[side] == NULL)
 	{
@@ -928,10 +1105,17 @@ bool loadVideoFrames(const char * mediapath,double & last_frame, double & fps, i
 		printf("\n---STREAM %d IS IN USE---\n", side);
 		//closeVideoThread(side);
 	}
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].release();
 #else
 	ReleaseMutex(videoStreamLock[side]);
+#endif
 #endif
 #if 0
 	if(!SetProcessAffinityMask(process, p_processAffinityMask))
@@ -950,10 +1134,17 @@ bool loadVideoFrames(const char * mediapath,double & last_frame, double & fps, i
 void seekVideoThread(int side, double clock, double seekDuration)
 //void seekVideoThread(int side, double seekDuration)
 {
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].grab();
 #else
 	WaitForSingleObject(videoStreamLock[side], INFINITE);
+#endif
 #endif
 	if(videoSources[side] != NULL)
 	{	
@@ -964,10 +1155,17 @@ void seekVideoThread(int side, double clock, double seekDuration)
 	{
 		printf("videoSources[%d] == NULL\n", side);
 	}
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].release();
 #else
 	ReleaseMutex(videoStreamLock[side]);
+#endif
 #endif
 }
 /* Shutdown the specified video stream.
@@ -975,10 +1173,17 @@ void seekVideoThread(int side, double clock, double seekDuration)
 
 void pauseFrameReader(int side)
 {
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].grab();
 #else
 	WaitForSingleObject(videoStreamLock[side], INFINITE);
+#endif
 #endif
 	if(videoSources[side] != NULL)
 	{
@@ -986,19 +1191,33 @@ void pauseFrameReader(int side)
 	}
 	else
 		printf("videoSources[%d] == NULL\n", side);
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].release();
 #else
 	ReleaseMutex(videoStreamLock[side]);
-#endif	
+#endif
+#endif
 }
 
 void closeVideoThread(int side)
 {
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].grab();
 #else
 	WaitForSingleObject(videoStreamLock[side], INFINITE);
+#endif
 #endif
 	if(videoSources[side] != NULL)
 	{	
@@ -1017,10 +1236,18 @@ void closeVideoThread(int side)
 	}
 	//else
 		//printf("\n-Closing video stream failure (source not initialised): %d\n", side);
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].release();
 #else
 	ReleaseMutex(videoStreamLock[side]);
+#endif
 #endif
 }
 /* Start a new thread and begin reading/decoding the FFmpeg stream.
@@ -1068,14 +1295,23 @@ void frameReader(void * parg)
 		//printf("$$$FrameReader Thread - Process Affinity: %d\n", core);
 	} // while(!finished);
 
+	
 	WaitForSingleObject(args->readerSemaphore,INFINITE);
+	CloseHandle(args->readerSemaphore);
 
 #if 1
 	//printf("-Getting ready to shutdown FP thread %d.\n", side);
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].grab();
 #else
 	WaitForSingleObject(videoStreamLock[side], INFINITE);
+#endif
 #endif
 
 	//videoSources[side]->clearAudioPackets();
@@ -1085,10 +1321,17 @@ void frameReader(void * parg)
 	videoSources[side] = NULL;
 	videoFinished[side] = false;
 	//videoFinished[side] = true;
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].release();
 #else
 	ReleaseMutex(videoStreamLock[side]);
+#endif
 #endif
 	delete args;
 #endif
@@ -1168,11 +1411,20 @@ double getNextVideoFrame(double openALAudioClock, double pauseLength, int side, 
 #endif
 {
 	double ret = -5;
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].grab();
 #else
 	WaitForSingleObject(videoStreamLock[side], INFINITE);
 #endif
+#endif
+
 	if(videoSources[side] != NULL)
 #ifdef NETWORKED_AUDIO
 		ret = videoSources[side]->video_refresh_timer(netClock, pauseLength, plainData);
@@ -1180,10 +1432,17 @@ double getNextVideoFrame(double openALAudioClock, double pauseLength, int side, 
 		ret = videoSources[side]->video_refresh_timer(openALAudioClock, pauseLength, plainData);
 #endif
 
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].release();
 #else
 	ReleaseMutex(videoStreamLock[side]);
+#endif
 #endif
 	return ret;
 }
@@ -1193,17 +1452,31 @@ double getNextVideoFrame(double openALAudioClock, double pauseLength, int side, 
 double getNextVideoFramePbo(double netClock, double pauseLength, int side, char *plainData, double pboPTS)
 {
 	double ret = -5;
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].grab();
 #else
 	WaitForSingleObject(videoStreamLock[side], INFINITE);
 #endif
+#endif
 	if(videoSources[side] != NULL)
 		ret = videoSources[side]->video_refresh_timer_pbo(netClock, pauseLength, plainData, pboPTS);
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].release();
 #else
 	ReleaseMutex(videoStreamLock[side]);
+#endif
 #endif
 	return ret;
 }
@@ -1211,17 +1484,31 @@ double getNextVideoFramePbo(double netClock, double pauseLength, int side, char 
 double getVideoPts(int side)
 {
 	double ret = -5;
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].grab();
 #else
 	WaitForSingleObject(videoStreamLock[side], INFINITE);
 #endif
+#endif
 	if(videoSources[side] != NULL)
 		ret = videoSources[side]->video_pts();
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].release();
 #else
 	ReleaseMutex(videoStreamLock[side]);
+#endif
 #endif
 	return ret;
 }
@@ -1229,17 +1516,31 @@ double getVideoPts(int side)
 double getNextVideoFrameNext(int side, char *plainData, int pboIndex, double& pboPTS)
 {
 	double ret = -5;
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	EnterCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].grab();
 #else
 	WaitForSingleObject(videoStreamLock[side], INFINITE);
 #endif
+#endif
 	if(videoSources[side] != NULL)
 		ret = videoSources[side]->video_refresh_timer_next(plainData, pboIndex, pboPTS);
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+	LeaveCriticalSection(&videoStreamLock[side]);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	videoStreamLock[side].release();
 #else
 	ReleaseMutex(videoStreamLock[side]);
+#endif
 #endif
 	return ret;
 }

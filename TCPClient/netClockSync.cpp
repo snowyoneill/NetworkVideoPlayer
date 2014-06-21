@@ -2,7 +2,7 @@
 #include "netClockSync.h"
 //#include "videoplayback.h"
 
-static bool broadcastAudio = true;
+extern bool broadcastAudio;
 #if 0
 static bool broadcastPTS = false;
 ofxUDPManager *udpPTSConnection = NULL;
@@ -11,6 +11,7 @@ ofxUDPManager *udpPTSConnection = NULL;
 #ifdef NETWORKED_AUDIO
 int _clientSenderID = -1;
 int _udpAudioServerPort = 2008;
+char* _udpMCastIP = "224.0.0.0";
 char* _udpAudioServerIP = "127.0.0.1";
 char* _tcpAudioServerIP = "127.0.0.1"; // default TCP server IP
 int _tcpAudioServerPort = 2007; // default port
@@ -23,6 +24,7 @@ ofxUDPManager *udpConnectionSide[MAXSTREAMS]; // used to create a single UDP per
 
 double netAudioClock[MAXSTREAMS];// = 0;
 double avgNetLatency = 0;
+double minLatency = LONG_MAX;
 double g_UDPDelay = 0.0;
 
 enum {astop, aplay, invalid};
@@ -65,10 +67,11 @@ double getNetTimer()
 double testNetworkLatency()
 {
 	printf("Testing network latency...please wait.\n");
-	//udpConnection->SetNonBlocking(false);
-	//udpConnection->SetTimeoutReceive(VIDEO_UDP_TIMEOUT);
-	#define TOTAL	100
+	udpConnection->SetNonBlocking(false);
+	udpConnection->SetTimeoutReceive(NO_TIMEOUT);
+	#define TOTAL	20
 	double latencyTimes[TOTAL];
+	minLatency = LONG_MAX;
 	for (int i = 0; i < TOTAL; i++)
 	{
 		double netClock;
@@ -82,13 +85,19 @@ double testNetworkLatency()
 		while(netClock < 0);
 		latencyTimes[i] = getGlobalVideoTimer(currentVideo);
 	}
-
 	double avg = 0;
+	
 	for (int i = 0; i < TOTAL; i++)
-		avg += latencyTimes[i]/2.0f;
+	{
+		printf("RTT: %09.6f (ms)\n", latencyTimes[i]);
+		if(latencyTimes[i] < minLatency)
+			minLatency = latencyTimes[i];
+		avg += latencyTimes[i];
+	}
 
 	//udpConnection->SetTimeoutReceive(0);
 	//udpConnection->SetNonBlocking(true);
+	printf("TOTAL: %09.6f - COUNT: %d\n", avg, TOTAL);
 
 	return (avg)/TOTAL;
 }
@@ -106,6 +115,9 @@ void initNetSync(char *serverIP, int TCPPort, int UDPPort, int ClientID, int sid
 	_tcpAudioServerIP = audioServerIP;
 	_tcpAudioServerPort = audioServerTCPPort;
 
+	if(broadcastAudio)
+		_udpAudioServerIP = _udpMCastIP;
+
 	printf("Setting up ClientID: %d, TCP Server IP: %s, UDP Server IP: %s, TCP port: %d UDP Port: %d\n", _clientSenderID, _tcpAudioServerIP, _udpAudioServerIP, audioServerTCPPort, audioServerUDPPort);
 	printf("\n");
 
@@ -114,11 +126,23 @@ void initNetSync(char *serverIP, int TCPPort, int UDPPort, int ClientID, int sid
 	}
 	if(testLatency)
 	{
-		avgNetLatency = testNetworkLatency();
-		printf("Average UDP network latency (milliseconds): %f\n", avgNetLatency);
+		if(broadcastAudio)
+			printf("Broadcast Audio enabled cannot determine network latency.\n");
+		else
+		{
+			avgNetLatency = testNetworkLatency();
+			printf("Average UDP network latency (milliseconds): %f\n", avgNetLatency);
+			printf("Mininum UDP network latency (milliseconds): %f\n", minLatency);
+		}
 	}
 
+	if(broadcastAudio)
+		printf("Audio timer broadcast enabled.\n");
+	else
+		printf("Audio timer broadcast disabled.\n");
+
 	_beginthread(syncThread, 0, 0);
+	_beginthread(tcpThread, 0, 0);
 }
 
 bool audioClientSetup()
@@ -207,7 +231,8 @@ int connectToUDPServer()
 	}
 	else
 	{
-		connected = udpConnection->Bind(_udpAudioServerPort);
+		//connected = udpConnection->Bind(_udpAudioServerPort);
+		connected = udpConnection->BindMcast(_udpAudioServerIP, _udpAudioServerPort);
 	}		
 
 	//bool connected = udpConnection->Connect(_udpAudioServerIP, _udpAudioServerPort);
@@ -297,29 +322,31 @@ double parseUDPCommands(int lside, double *snt_date, uint64_t *master_time)
 	int received = udpConnection->Receive(msg, bufsize);
 	string message=msg;
 
-	//string message;
-	//string tempMessage;
-	//bool getNext = true;
-	//while (getNext)
+	//if(broadcastAudio)
 	//{
-	//	sprintf(msg, "");
-	//	udpConnection->SetNonBlocking(false);udpConnection->SetTimeoutReceive(2);
-	//	int bufsize = udpConnection->GetReceiveBufferSize();
-	//	int received = udpConnection->Receive(msg, bufsize);
-	//   tempMessage=msg;
-
-	//  if (tempMessage == "")
+	//	string tempMessage;
+	//	bool getNext = true;
+	//	while (getNext)
 	//	{
-	//      getNext = false;
-	//		udpConnection->SetNonBlocking(false);udpConnection->SetTimeoutReceive(2);
-	//		printf("UDP buffer finished:-------------\n");
+	//	   tempMessage=msg;
+	//		if (tempMessage == "")
+	//		{
+	//		  getNext = false;
+	//			//udpConnection->SetNonBlocking(false);udpConnection->SetTimeoutReceive(2);
+	//			//printf("UDP buffer finished:-------------\n");
+	//		}
+	//		else
+	//		{
+	//			message = tempMessage;
+	//			//printf("UDP buffer: %s\n", message.c_str());
+	//		}
+	//		sprintf(msg, "");
+	//		//udpConnection->SetNonBlocking(false);udpConnection->SetTimeoutReceive(2);
+	//		int bufsize = udpConnection->GetReceiveBufferSize();
+	//		int received = udpConnection->Receive(msg, bufsize);
 	//	}
-	//	else
-	//	{
-	//        message = tempMessage;
-	//		printf("UDP buffer: %s\n", message.c_str());
-	//	}
- //	}
+	//}
+	//udpConnection->SetNonBlocking(true);
 
 	if(message != "")
 	{
@@ -387,8 +414,8 @@ double parseUDPCommands(int lside, double *snt_date, uint64_t *master_time)
 	}
 	//else if(received == SOCKET_TIMEOUT)
 		//printf("\nVIDEO SOCKET TIMED OUT.\n");
-	//else
-	//	printf("No data received = %d\n", received);
+	else
+		printf("No data received = %d\n", received);
 
 	return -1;
 }
@@ -678,7 +705,6 @@ void parseTCPCommands()
 
 void syncThread(void* dummy)
 {
-
 	//return;
 	//DWORD_PTR threadAffMask = SetThreadAffinityMask(GetCurrentThread(), core);
 	//if(threadAffMask == 0)
@@ -691,19 +717,25 @@ void syncThread(void* dummy)
 	if(!broadcastAudio)
 	{
 		udpConnection->SetNonBlocking(false);
-		udpConnection->SetTimeoutReceive(2);
+		udpConnection->SetTimeoutReceive(1);
+
+		//udpConnection->SetNonBlocking(true);
 	}
 	else
 	{
 		//udpConnection->SetTimeoutReceive(0);
-		udpConnection->SetNonBlocking(true);
+		//udpConnection->SetNonBlocking(true);
+
+		udpConnection->SetNonBlocking(false);
+		udpConnection->SetTimeoutReceive(1);
 	}
 
 	while(true)
 	{
 		totalActiveVideos = 0;
 #if 1
-#ifdef NETWORKED_AUDIO
+
+#if 0
 		if(getNetTimer() > 250)
 		{
 			startNetTimer();
@@ -716,6 +748,8 @@ void syncThread(void* dummy)
 				{
 					udpConnection->SetNonBlocking(false);
 					udpConnection->SetTimeoutReceive(2);
+
+					//udpConnection->SetNonBlocking(true);
 				}
 				else
 				{
@@ -723,11 +757,11 @@ void syncThread(void* dummy)
 					udpConnection->SetNonBlocking(true);
 				}
 			}
-#endif
+
 		}
-		
 		if(commandReceiver->isConnected())
 			parseTCPCommands();
+#endif
 
 		for (int i = 0 ; i < MAXSTREAMS; i++)
 		{
@@ -777,26 +811,33 @@ void syncThread(void* dummy)
 						//printf("master_time>%016I64x : %I64u : %f\n", master_time, ntoh64(master_time), master_time / 1000000.0);
 
 						double receive_date = getGlobalVideoTimer(i) / (double)1000;
-
 						//netAudioCloeck[i] = -1;
 						if(sent_date >= 0 && udpAudioClock >= 0)
 						{
-							//netAudioClock[i] = /*ceil((receive_date - sent_date) / 2.0f*/ + udpAudioClock;//);
+							double rTT = ((receive_date - sent_date) / 2.0f);
+							if(rTT > minLatency)
+							{
+								printf("late packet - RTT: %09.6f\n", rTT);
+								rTT = minLatency;
+							}
 							if(!broadcastAudio)
-								netAudioClock[i] = udpAudioClock;//((receive_date - sent_date) / 2.0f + udpAudioClock);
+								netAudioClock[i] = rTT + udpAudioClock;
 							else
 								netAudioClock[i] = (udpAudioClock);
 							//netAudioClock[i] = master_time;
 							//netAudioClock[i] =  /*((receive_date - sent_date) / 2.0f) +*/ (master_time / 1000000.0);
 							//printf(">>>>Recieved timestamp: %I64u\n", netAudioClock[i]);
 						}
-						//printf(">>>>Recieved timestamp %d - now: %06.3f - netAudioClock: %06.3f - ServerClock: %06.3f - sent_date: %06.3f - receive_date: %06.3f.\n", i, now[i], netAudioClock[i], udpAudioClock, sent_date, receive_date);
+						//printf(">>>>Recieved timestamp %d - now: %06.3f - netAudioClock: %06.3f - ServerClock: %06.3f - sent_date: %06.3f - receive_date: %06.3f - RTT: %06.3f.\n", i, now[i], netAudioClock[i], udpAudioClock, sent_date, receive_date, receive_date-sent_date);
 					}
 				}
 		}
 
-		Sleep(10); // give up resources.
-		//Sleep(PCFreq / 20);
+		if(!broadcastAudio)
+		{
+			Sleep(10); // give up resources.
+			//Sleep(PCFreq / 20);
+		}
 #endif
 		//DWORD core = GetCurrentProcessorNumber();
 		//printf("~~~~~Network Thread - Process Affinity: %d\n", core);
@@ -811,25 +852,34 @@ void syncThread(void* dummy)
 				start[i] = 0;
 				now[i] = 0;
 			}
-
-			//udpConnection->SetNonBlocking(true);
-			////udpConnection->SetTimeoutReceive(0);
-			//string message;
-			//bool getNext = true;
-			//while (getNext)
-			//{
-			//	sprintf(msg, "");
-			//	int bufsize = udpConnection->GetReceiveBufferSize();
-			//	int received = udpConnection->Receive(msg, bufsize);
-			//	message=msg;
-
-			//	if (message == "")
-			//	{
-			//		getNext = false;
-			//		//printf("UDP buffer finished:-------------\n");
-			//	}
-			//}
 		}
+	}
+}
+
+void tcpThread(void* dummy)
+{
+	while(true)
+	{
+#if 1
+#ifdef NETWORKED_AUDIO
+		if(getNetTimer() > 250)
+		{
+			startNetTimer();
+			if(/*!commandReceiver->send("") && */!commandReceiver->isConnected()) // Check if the client is still connected to the audio server
+			{
+				printf("###Re-connecting to the server...\n");
+				audioClientSetup(); // If not setup TCP/UDP connection
+			}
+#endif
+		}
+		
+		if(commandReceiver->isConnected())
+			parseTCPCommands();
+
+		Sleep(10); // give up resources.
+		//Sleep(PCFreq / 20);
+
+#endif
 	}
 }
 #endif

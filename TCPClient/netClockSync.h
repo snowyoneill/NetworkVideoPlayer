@@ -61,6 +61,7 @@ bool audioClientSetup();
 void startGlobalVideoTimer(int videounit);
 double getGlobalVideoTimer(int videounit);
 void syncThread(void* dummy);
+void tcpThread(void* dummy);
 
 #endif
 

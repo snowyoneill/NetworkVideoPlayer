@@ -181,6 +181,8 @@ struct ODFfmpegSource
 
 	////////////////////////////////// AUDIO  /////////////////////////////////
 
+#ifdef AUDIO_DECODING
+	bool ODFfmpegSource::hasAudiostream();
 	int getAVAudioInfo(unsigned int *rate, int *channels, int *type);
 	int audio_decode_frame(char *audio_buf, int buf_size);
 	int getAudioBuffer(char* stream, int requested_buffer_size);
@@ -188,12 +190,15 @@ struct ODFfmpegSource
 	void clearAudioPackets();
 	int getAVAudioData(char *data, int requested_buffer_size);
 
-	void video_packet_queue_flush(PacketQueue *q);
+	
 	void audio_packet_queue_flush(PacketQueue *q);
 	int audio_packet_queue_put(PacketQueue *q, AVPacket *pkt);
 	int audio_packet_queue_get(PacketQueue *q, AVPacket *pkt);
+#endif
 
 	////////////////////////////////// VIDEO /////////////////////////////////
+
+	void video_packet_queue_flush(PacketQueue *q);
 	double synchronize_video(double pts);
 	int queue_picture(AVFrame *pFrame, double pts);
 #ifdef VIDEO_DECODING

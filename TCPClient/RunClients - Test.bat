@@ -1,15 +1,15 @@
 ::-----------------------------------------------------------------------------LOCAL_AUDIO----------------------------------------------------------------------------------------------------
-::start ..\x64\Release_LOCALAUDIO\TCPClient.exe -ClientID 1 -StreamID 0 -VideoPath E:\TV\StargateUniverse\Season2\Stargate.Universe.S02E12.HDTV.XviD-ASAP.[VTV].avi -AutoStart false -Loop false -ScreenSync true -Vsync false -Affinity 255 -Debug false -Res 852x480 -Position 0x0 -enablePBOs true -intelliSleep true -multiTimer true
+::start ..\x64\Release_LOCALAUDIO\TCPClient.exe -ClientID 1 -StreamID 0 -VideoPath E:\TV\StargateUniverse\Season2\Stargate.Universe.S02E12.HDTV.XviD-ASAP.[VTV].avi -AutoStart false -Loop false -ScreenSync true -Vsync false -Affinity 255 -Debug false -Res 852x480 -Position 0x0 -enablePBOs true -intelliSleep false -multiTimer true
 ::Timeout  1
 ::---------------------------------------------------------------------------NETWORKED_AUDIO-------------------------------------------------------------------------------------------------
-start ..\x64\Release\TCPClient.exe -ClientID 1 -StreamID 0 -VideoPath "E:\Transformers.2.2009.IMAX.Edition.1080p.Bluray.DTS.x264-D-Z0N3.Sample.By.LillosKing.mkv" -AutoStart false -Loop false -ScreenSync true -Vsync false -Affinity 255 -Debug false -Res 852x480 -Position 1000x0 -enablePBOs true -intelliSleep false -multiTimer false
+start ..\x64\Release\TCPClient.exe -UDPPort 2008 -ClientID 1 -StreamID 0 -VideoPath "C:\Users\obscura\Desktop\VJ\Vids\shaun_test_vid_audio.mp4" -AutoStart false -Loop false -ScreenSync true -Vsync true -Affinity 255 -Debug false -Res 852x480 -Position 1000x0 -enablePBOs true -intelliSleep false -multiTimer true -Broadcast true -TestLatency true
 ::Timeout  1
-::start ..\x64\Release\TCPClient.exe -UDPPort 2009 -ClientID 2 -StreamID 0 -VideoPath E:\TV\StargateUniverse\Season2\Stargate.Universe.S02E12.HDTV.XviD-ASAP.[VTV].avi -AutoStart false -Loop false -ScreenSync true -Vsync false -Affinity 255 -Debug false -Res 852x480 -Position 1000x480 -enablePBOs true -intelliSleep false -multiTimer true
+start ..\x64\Release\TCPClient.exe -UDPPort 2008 -ClientID 2 -StreamID 0 -VideoPath E:\TV\StargateUniverse\Season2\Stargate.Universe.S02E12.HDTV.XviD-ASAP.[VTV].avi -AutoStart false -Loop false -ScreenSync true -Vsync true -Affinity 255 -Debug false -Res 852x480 -Position 1000x480 -enablePBOs true -intelliSleep false -multiTimer true -Broadcast true -TestLatency true
 ::Timeout  1
 ::start ..\x64\Release\TCPClient.exe -UDPPort 2008 -ClientID 3 -StreamID 0 -VideoPath E:\TV\StargateUniverse\Season2\Stargate.Universe.S02E12.HDTV.XviD-ASAP.[VTV].avi -AutoStart false -Loop false -ScreenSync true -Vsync false -Affinity 255 -Debug false -Res 852x480 -Position 1000x560 -enablePBOs true -intelliSleep false -multiTimer false
 ::Timeout  1
 ::start ..\x64\Release\TCPClient.exe -ClientID 3 -StreamID 0 -VideoPath I:\Obscura\PUC\TCPAudioClient\TCPClient\sample4.mp4 -AutoStart false -Loop false -ScreenSync true -Vsync true -Affinity 255 -Debug false -Res 852x480 -Position 0x500 -enablePBOs true -intelliSleep true -multiTimer true
-::Timeout  1
+::Timeout  1e
 ::start ..\x64\Release\TCPClient.exe -ClientID 4 -StreamID 0 -VideoPath I:\Obscura\PUC\TCPAudioClient\TCPClient\sample3.mp4 -AutoStart false -Loop false -ScreenSync true -Vsync true -Affinity 255 -Debug false -Res 852x480 -Position 1000x500 -enablePBOs true -intelliSleep true -multiTimer true
 ::Timeout  1
 ::start ..\x64\Release\TCPClient.exe -ClientID 5 -StreamID 0 -VideoPath I:\Obscura\PUC\TCPAudioClient\TCPClient\sample3.mp4 -AutoStart false -Loop false -ScreenSync true -Vsync false -Affinity 1 -Debug false -Res 852x480 -Position 2000x0

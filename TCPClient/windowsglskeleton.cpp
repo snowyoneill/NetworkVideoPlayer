@@ -201,19 +201,19 @@ HWND CreateGLWindow(char* title, int width, int height, int bits, int zbuff,int 
 		return 0;	    							// Return false
 	}
 
-	ShowWindow(hWnd,SW_SHOW);						// Show The Window
-	SetForegroundWindow(hWnd);						// Slightly Higher Priority
-	SetFocus(hWnd);									// Sets Keyboard Focus To The Window
-	ReSizeGLScene(width, height);					// Set Up Our Perspective GL Screen
-
-	//UpdateWindow( hWnd );        // Sends WM_PAINT message
-
 	if (!InitGL())									// Initialize Our Newly Created GL Window
 	{
 		KillGLWindow();								// Reset The Display
 		MessageBox(NULL,"Initialization Failed.","ERROR",MB_OK|MB_ICONEXCLAMATION);
 		return 0;   								// Return false
 	}
+
+	ShowWindow(hWnd,SW_SHOW);						// Show The Window
+	SetForegroundWindow(hWnd);						// Slightly Higher Priority
+	SetFocus(hWnd);									// Sets Keyboard Focus To The Window
+
+	//UpdateWindow( hWnd );        // Sends WM_PAINT message
+	ReSizeGLScene(width, height);					// Set Up Our Perspective GL Screen
 
 	return hWnd;									// Success
 }
@@ -240,7 +240,7 @@ LRESULT CALLBACK WndProc(	HWND	hWnd,			// Handle For This Window
 
 		case WM_CLOSE:								// Did We Receive A Close Message?
 		{
-			shutdownPlayer();
+			//shutdownPlayer();
 			PostQuitMessage(0);						// Send A Quit Message
 			return 0;								// Jump Back
 		}
@@ -266,8 +266,8 @@ LRESULT CALLBACK WndProc(	HWND	hWnd,			// Handle For This Window
 
 		case WM_LBUTTONDOWN:
 		{
-			mouse_x = LOWORD(lParam);          
-			mouse_y = HIWORD(lParam);
+			//mouse_x = LOWORD(lParam);          
+			//mouse_y = HIWORD(lParam);
 			return 0;
 		}
 		case WM_RBUTTONDBLCLK:
@@ -305,10 +305,30 @@ LRESULT CALLBACK WndProc(	HWND	hWnd,			// Handle For This Window
 		case WM_LBUTTONUP:
 		{
             //OutputDebugString("Mouse button up\n");
+			mouse_x = LOWORD(lParam);          
+			mouse_y = HIWORD(lParam);
 			return 0;
 		}
 		case WM_MOUSEMOVE:
 		{
+            //OutputDebugString("Mouse move\n");
+			return 0;
+		}
+		case WM_MOUSEWHEEL:
+		{
+			#ifndef GET_X_LPARAM
+			#define GET_X_LPARAM(lp) ((int)(short)LOWORD(lp))
+			#endif
+			#ifndef GET_Y_LPARAM
+			#define GET_Y_LPARAM(lp) ((int)(short)HIWORD(lp))
+			#endif
+
+			int xPos = GET_X_LPARAM(lParam); 
+			int yPos = GET_Y_LPARAM(lParam);
+			float zDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+			zDelta /= WHEEL_DELTA;
+			printf("MOUSE_WHEEL: x: %d - y: %d - zDelta: %f\n", xPos, yPos, zDelta);
+
             //OutputDebugString("Mouse move\n");
 			return 0;
 		}
@@ -324,25 +344,27 @@ LRESULT CALLBACK WndProc(	HWND	hWnd,			// Handle For This Window
 
 			return 0;
 		}
-		//case WM_PAINT:
-		//{
-  //      // Draw the scene.
+/*
+		case WM_PAINT:
+		{
+			// Draw the scene.
 
-  //          // Get a DC, then make the RC current and
-  //          // associate with this DC
-  //          hDC = BeginPaint( hWnd, &ps );
-  //          //wglMakeCurrent( hDC, hRC );
+            // Get a DC, then make the RC current and
+            // associate with this DC
+            hDC = BeginPaint( hWnd, &ps );
+            //wglMakeCurrent( hDC, hRC );
 
-  //          DrawGLScene();
+            DrawGLScene();
 
-  //          // we're done with the RC, so
-  //          // deselect it
-  //          // (note: This technique is not recommended!)
-  //          //wglMakeCurrent( NULL, NULL );
+            // we're done with the RC, so
+            // deselect it
+            // (note: This technique is not recommended!)
+            //wglMakeCurrent( NULL, NULL );
 
-  //          EndPaint( hWnd, &ps );
-  //          return 0;
-		//}
+            EndPaint( hWnd, &ps );
+            return 0;
+		}
+*/
 	}
 	return DefWindowProc(hWnd,uMsg,wParam,lParam);
 }
@@ -378,7 +400,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             {
                 if (keys[VK_ESCAPE] || msg.message == WM_APP+1)
 				{
-					shutdownPlayer();
+					//shutdownPlayer();
                     done=true;							// ESC or DrawGLScene Signalled A Quit
 				}
                 if (msg.message==WM_QUIT)				// Have We Received A Quit Message?
@@ -393,7 +415,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             {
 				//if(!wglMakeCurrent(getHDC(), getHRC()))
 				//	printf("Couldn't make current.\n");
-
                 DrawGLScene();
 				//SwapBuffers(hDC);
 				//UpdateWindow( hWnd );        // Sends WM_PAINT message
@@ -401,6 +422,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             }
         }
 
+		shutdownPlayer();
         KillGLWindow();
     }
 	catch (...)

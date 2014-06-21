@@ -6,6 +6,7 @@
 #include "ODFfmpegSource.h"
 
 #include <windows.h>
+#include "constants.h"
 
 #if 0
 #define AVCODEC_MAX_AUDIO_FRAME_SIZE 192000
@@ -83,7 +84,6 @@ const double ODFfmpegSource::UnknownTime = -1.0;
 const double ODFfmpegSource::UnknownFPS = -1.0;
 
 AVPacket flush_pkt, end_pkt;
-bool decoderReachedEnd;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////// INTERNAL VIDEO STATE ////////////////////////////////////////////////
@@ -218,9 +218,26 @@ struct ODFfmpegSource::State
 	int64_t         seek_pos;
 
 	bool isPaused;
+	bool decoderReachedEnd;
 
 	/* Mutexs / semaphores initialization - resource access control to queues.
 	 */
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+	CRITICAL_SECTION audioqMutex;
+	CRITICAL_SECTION pictqMutex;
+	CRITICAL_SECTION videoqMutex;
+#ifdef USE_ODBASE
+	ODBase::Semaphore pictqSemaphore;
+	ODBase::Semaphore pictPacketqSemaphore;
+#else
+	HANDLE pictqSemaphore;// = CreateSemaphore( NULL, 0 , 1, NULL);
+	HANDLE pictPacketqSemaphore;// = CreateSemaphore( NULL, 0 , 1, NULL);
+#endif
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	ODBase::Lock audioqMutex;
 	ODBase::Lock pictqMutex;
@@ -233,6 +250,7 @@ struct ODFfmpegSource::State
 	HANDLE pictqSemaphore;// = CreateSemaphore( NULL, 0 , 1, NULL);
 	HANDLE pictPacketqSemaphore;// = CreateSemaphore( NULL, 0 , 1, NULL);
 	HANDLE videoqMutex;// = CreateMutex(NULL, false, NULL);
+#endif
 #endif
 };
 
@@ -254,12 +272,18 @@ void ODFfmpegSource::audio_packet_queue_flush(PacketQueue *q)
 {
   AVPacketList *pkt, *pkt1;
 
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->audioqMutex);
+#endif
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	state->audioqMutex.grab();
 #else
 	WaitForSingleObject(state->audioqMutex, INFINITE);
 #endif
 
+#endif
 	for(pkt = q->first_pkt; pkt != NULL; pkt = pkt1) {
 		pkt1 = pkt->next;
 		av_free_packet(&pkt->pkt);
@@ -269,11 +293,16 @@ void ODFfmpegSource::audio_packet_queue_flush(PacketQueue *q)
 	q->first_pkt = NULL;
 	q->nb_packets = 0;
 	q->size = 0;
-	
+
+#ifdef  USE_CRITICAL_SECTION
+	LeaveCriticalSection(&state->audioqMutex);
+#endif
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	state->audioqMutex.release();
 #else
 	ReleaseMutex(state->audioqMutex);
+#endif
 #endif
 }
 
@@ -292,10 +321,16 @@ int ODFfmpegSource::audio_packet_queue_put(PacketQueue *q, AVPacket *pkt)
 	pkt1->pkt = *pkt;
 	pkt1->next = NULL;
 
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->audioqMutex);
+#endif
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	state->audioqMutex.grab();
 #else
 	WaitForSingleObject(state->audioqMutex, INFINITE);
+#endif
 #endif
 	//WaitForSingleObject(audioqMutex, INFINITE);
 	//SDL_LockMutex(q->mutex);
@@ -309,10 +344,15 @@ int ODFfmpegSource::audio_packet_queue_put(PacketQueue *q, AVPacket *pkt)
 	//SDL_CondSignal(q->cond);
 	//SDL_UnlockMutex(q->mutex);
 	//ReleaseMutex(audioqMutex);
+#ifdef  USE_CRITICAL_SECTION
+	LeaveCriticalSection(&state->audioqMutex);
+#endif
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	state->audioqMutex.release();
 #else
 	ReleaseMutex(state->audioqMutex);
+#endif
 #endif
 	//printf("PACKET PUT: nb_packets %d\n", q->nb_packets);
 
@@ -328,10 +368,16 @@ int ODFfmpegSource::audio_packet_queue_get(PacketQueue *q, AVPacket *pkt)
   
   //SDL_LockMutex(q->mutex);
 
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->audioqMutex);
+#endif
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	state->audioqMutex.grab();
 #else
 	WaitForSingleObject(state->audioqMutex, INFINITE);
+#endif
 #endif
   //WaitForSingleObject(audioqMutex, INFINITE);
   //while(ret == -1)
@@ -361,10 +407,15 @@ int ODFfmpegSource::audio_packet_queue_get(PacketQueue *q, AVPacket *pkt)
   //}
   //SDL_UnlockMutex(q->mutex);
   //ReleaseMutex(audioqMutex);
+#ifdef  USE_CRITICAL_SECTION
+	LeaveCriticalSection(&state->audioqMutex);
+#endif
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	state->audioqMutex.release();
 #else
 	ReleaseMutex(state->audioqMutex);
+#endif
 #endif
   //return -1;
   return ret;
@@ -376,10 +427,17 @@ void ODFfmpegSource::video_packet_queue_flush(PacketQueue *q)
 {
 	AVPacketList *pkt, *pkt1;
 
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->videoqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	state->videoqMutex.grab();
 #else
 	WaitForSingleObject(state->videoqMutex, INFINITE);
+#endif
 #endif
 	for(pkt = q->first_pkt; pkt != NULL; pkt = pkt1) {
 		pkt1 = pkt->next;
@@ -391,10 +449,18 @@ void ODFfmpegSource::video_packet_queue_flush(PacketQueue *q)
 	q->nb_packets = 0;
 	q->size = 0;
 	//printf("FLUSH videoq.\n");
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->videoqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	state->videoqMutex.release();
 #else
 	ReleaseMutex(state->videoqMutex);
+#endif
 #endif
 }
 
@@ -411,10 +477,17 @@ int ODFfmpegSource::vid_packet_queue_put(PacketQueue *q, AVPacket *pkt)
 	pkt1->pkt = *pkt;
 	pkt1->next = NULL;
 
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->videoqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	state->videoqMutex.grab();
 #else
 	WaitForSingleObject(state->videoqMutex, INFINITE);
+#endif
 #endif
 	//SDL_LockMutex(q->mutex);
 
@@ -433,10 +506,18 @@ int ODFfmpegSource::vid_packet_queue_put(PacketQueue *q, AVPacket *pkt)
 	ReleaseSemaphore(state->pictPacketqSemaphore, 1, NULL );
 #endif
 
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->videoqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	state->videoqMutex.release();
 #else
 	ReleaseMutex(state->videoqMutex);
+#endif
 #endif
 	//printf("put: nb_packets %d\n", q->nb_packets);
 
@@ -460,10 +541,17 @@ int ODFfmpegSource::vid_packet_queue_get(PacketQueue *q, AVPacket *pkt)
 			return -1;
 
 		
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->videoqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-		state->videoqMutex.grab();
+	state->videoqMutex.grab();
 #else
-		WaitForSingleObject(state->videoqMutex, INFINITE);
+	WaitForSingleObject(state->videoqMutex, INFINITE);
+#endif
 #endif
 
 		pkt1 = q->first_pkt;
@@ -478,10 +566,17 @@ int ODFfmpegSource::vid_packet_queue_get(PacketQueue *q, AVPacket *pkt)
 			av_free(pkt1);
 			ret = 1;
 
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->videoqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-			state->videoqMutex.release();
+	state->videoqMutex.release();
 #else
-			ReleaseMutex(state->videoqMutex);
+	ReleaseMutex(state->videoqMutex);
+#endif
 #endif
 
 			//printf("get: nb_packets %d\n", q->nb_packets);
@@ -490,10 +585,17 @@ int ODFfmpegSource::vid_packet_queue_get(PacketQueue *q, AVPacket *pkt)
 		}
 		else
 		{
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->videoqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-			state->videoqMutex.release();
+	state->videoqMutex.release();
 #else
-			ReleaseMutex(state->videoqMutex);
+	ReleaseMutex(state->videoqMutex);
+#endif
 #endif
 			
 #ifdef USE_ODBASE
@@ -542,17 +644,33 @@ double ODFfmpegSource::video_refresh_timer(double openALAudioClock, double pause
 
 	if(state->codecCtx_)
 	{
-#ifdef USE_ODBASE
-		state->pictqMutex.grab();
-#else
-		WaitForSingleObject(state->pictqMutex, INFINITE);
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->pictqMutex);
 #endif
+
+#ifdef USE_MUTEX
+#ifdef USE_ODBASE
+	state->pictqMutex.grab();
+#else
+	WaitForSingleObject(state->pictqMutex, INFINITE);
+#endif
+#endif
+
 		if(state->pictq_size == 0)
 		{
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-			state->pictqMutex.release();
+	state->pictqMutex.release();
 #else
-			ReleaseMutex(state->pictqMutex);
+	ReleaseMutex(state->pictqMutex);
+#endif
 #endif
 			return -1;
 		}
@@ -563,10 +681,18 @@ double ODFfmpegSource::video_refresh_timer(double openALAudioClock, double pause
 		else
 		{
 			
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-			state->pictqMutex.release();
+	state->pictqMutex.release();
 #else
-			ReleaseMutex(state->pictqMutex);
+	ReleaseMutex(state->pictqMutex);
+#endif
 #endif
 
 			vp = &state->pictq[state->pictq_rindex];
@@ -735,10 +861,17 @@ double ODFfmpegSource::video_refresh_timer(double openALAudioClock, double pause
 					state->pictq_rindex = 0;
 
 				//printf("\tGrabbing video mutex\n");
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-				state->pictqMutex.grab();
+	state->pictqMutex.grab();
 #else
-				WaitForSingleObject(state->pictqMutex, INFINITE);
+	WaitForSingleObject(state->pictqMutex, INFINITE);
+#endif
 #endif
 
 				//WaitForSingleObject(pictqMutex, INFINITE);
@@ -749,12 +882,19 @@ double ODFfmpegSource::video_refresh_timer(double openALAudioClock, double pause
 				//SDL_CondSignal(is->pictq_cond);
 				//SDL_UnlockMutex(is->pictq_mutex);
 				//ReleaseMutex(pictqMutex);
-#ifdef USE_ODBASE
-				state->pictqMutex.release();
-#else
-				ReleaseMutex(state->pictqMutex);
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->pictqMutex);
 #endif
 
+#ifdef USE_MUTEX
+#ifdef USE_ODBASE
+	state->pictqMutex.release();
+#else
+	ReleaseMutex(state->pictqMutex);
+#endif
+#endif
 				//ReleaseSemaphore(state->pictqSemaphore, 1, NULL );
 #ifdef USE_ODBASE
 				state->pictqSemaphore.signal();
@@ -797,18 +937,32 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 
 	if(state->codecCtx_)
 	{
-//#ifdef USE_ODBASE
-//		state->pictqMutex.grab();
-//#else
-//		WaitForSingleObject(state->pictqMutex, INFINITE);
+//#ifdef  USE_CRITICAL_SECTION
+//	/* Enter the critical section -- other threads are locked out */
+//    EnterCriticalSection(&state->pictqMutex);
 //#endif
-//		if(state->pictq_size == 0 && ptsClk < 0)
+//
+//#ifdef USE_MUTEX
+//#ifdef USE_ODBASE
+//	state->pictqMutex.grab();
+//#else
+//	WaitForSingleObject(state->pictqMutex, INFINITE);
+//#endif
+//#endif
+		//if(state->pictq_size == 0 && ptsClk < 0)
 		if(ptsClk < 0)
 		{
+//#ifdef  USE_CRITICAL_SECTION
+//	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+//    LeaveCriticalSection(&state->pictqMutex);
+//#endif
+//
+//#ifdef USE_MUTEX
 //#ifdef USE_ODBASE
-//			state->pictqMutex.release();
+//	state->pictqMutex.release();
 //#else
-//			ReleaseMutex(state->pictqMutex);
+//	ReleaseMutex(state->pictqMutex);
+//#endif
 //#endif
 			//if(atVideoEnd_)
 			if(state->quit)
@@ -829,10 +983,17 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 		//}
 		else
 		{
+//#ifdef  USE_CRITICAL_SECTION
+//	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+//    LeaveCriticalSection(&state->pictqMutex);
+//#endif
+//
+//#ifdef USE_MUTEX
 //#ifdef USE_ODBASE
-//			state->pictqMutex.release();
+//	state->pictqMutex.release();
 //#else
-//			ReleaseMutex(state->pictqMutex);
+//	ReleaseMutex(state->pictqMutex);
+//#endif
 //#endif
 
 			//vp = &state->pictq[state->pictq_rindex];
@@ -843,7 +1004,7 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 			{
 				/* if incorrect delay, use previous one */
 				delay = state->frame_last_delay;
-				//printf("pbo -> ptsClk: %09.6f...Delay: %f - state->frame_last_pts: %f\n", ptsClk, delay, state->frame_last_pts);
+				printf("incorrect delay !!! pbo -> ptsClk: %09.6f...Delay: %f - state->frame_last_pts: %f\n", ptsClk, delay, state->frame_last_pts);
 				//return -1;
 			}
 			/* save for next time */
@@ -887,14 +1048,20 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 				//if(diff >= 2*sync_threshold)
 				//	return -10;
 				else if(diff >= sync_threshold)
+				{
 					delay = 2 * delay;
+					//return -diff * 1000;
+					//return (2 * delay)* 1000;
+				}
+				//delay = diff;
 			}
 			//printf(" - diff: %07.2f - delay: %07.2f - sync_threshold: %07.2f", diff, delay, sync_threshold);
 			state->frame_timer += delay;
 
 			/* computer the REAL delay */
 			actual_delay = state->frame_timer - (av_gettime() / 1000000.0) + pauseLength;
-			//actual_delay = state->frame_timer - ref_clock + pauseLength;
+			//actual_delay = state->frame_timer - state->frame_timer_start - ref_clock + pauseLength;
+			//actual_delay = delay + pauseLength;
 			
 			//printf("pbo -> ptsClk: %09.6f - ref_clock: %09.6f - diff: %09.6f - pauseLength: %09.6f - actual_delay: %09.6f\n", ptsClk, ref_clock, diff, pauseLength, actual_delay);
 
@@ -906,8 +1073,8 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 
 			if(actual_delay < 0.01) {
 				/* Really it should skip the picture instead */
-				//actual_delay = 0.01;
-				actual_delay = delay/2.0f;
+				actual_delay = 0.01;
+				//actual_delay = delay/2.0f;
 				//actual_delay *= -1;
 			}
 			//else if(actual_delay > 1.0) {
@@ -915,7 +1082,7 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 			//}
 			//else
 			//	actual_delay = 0.03;
-			double f_delay = int(actual_delay * 1000/* + 0.5*/);
+			double f_delay = /*int*/(actual_delay * 1000/* + 0.5*/);
 			//printf(" - f_delay: %07.2f\n", f_delay);
 
 			//if(abs(diff) > 2.0)
@@ -928,7 +1095,7 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 			//if(diff >= 2*sync_threshold)
 			//	return -10;
 			
-			//printf("ptsClk: %6.2f - ref_clock: %6.2f - diff: %6.2f - sync_threshold: %6.2f - f_delay: %6.2f.\n", ptsClk, ref_clock, diff, sync_threshold, f_delay);
+			//printf("delay: %6.3f - actual_delay: %6.3f - ptsClk: %6.2f - ref_clock: %6.2f - diff: %6.2f - sync_threshold: %6.2f - f_delay: %6.2f.\n", delay, actual_delay, ptsClk, ref_clock, diff, sync_threshold, f_delay);
 
 			//printf("vp->pts: %6.2f - ref_clock: %6.2f - diff: %6.2f - sync_threshold: %6.2f - f_delay: %6.2f.\n", vp->pts, ref_clock, diff, sync_threshold, f_delay);
 			//if(diff <= sync_threshold || diff > sync_threshold * VIDEO_PICTURE_QUEUE_SIZE)
@@ -940,36 +1107,42 @@ double ODFfmpegSource::video_refresh_timer_pbo(double openALAudioClock, double p
 			//		state->pictq_rindex = 0;
 
 			//	//printf("\tGrabbing video mutex\n");
-			//	state->pictqMutex.grab();
-			//	//WaitForSingleObject(pictqMutex, INFINITE);
-			//	state->pictq_size--;
-			//	//printf("out pictq_size: %d.\n", state->pictq_size);
-			//	//ReleaseMutex(pictqMutex);
-			//	state->pictqMutex.release();
+//#ifdef  USE_CRITICAL_SECTION
+//	/* Enter the critical section -- other threads are locked out */
+//    EnterCriticalSection(&state->pictqMutex);
+//#endif
+//
+//#ifdef USE_MUTEX
+//#ifdef USE_ODBASE
+//	state->pictqMutex.grab();
+//#else
+//	WaitForSingleObject(state->pictqMutex, INFINITE);
+//#endif
+//#endif
+//				state->pictq_size--;
+//				//printf("out pictq_size: %d.\n", state->pictq_size);
+//
+//#ifdef  USE_CRITICAL_SECTION
+//	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+//    LeaveCriticalSection(&state->pictqMutex);
+//#endif
+//
+//#ifdef USE_MUTEX
+//#ifdef USE_ODBASE
+//	state->pictqMutex.release();
+//#else
+//	ReleaseMutex(state->pictqMutex);
+//#endif
+//#endif
+//
+//#ifdef USE_ODBASE
+//				state->pictqSemaphore.signal();
+//#else
+//				ReleaseSemaphore(state->pictqSemaphore, 1, NULL );
+//#endif
 			//	//ReleaseSemaphore(state->pictqSemaphore, 1, NULL );
 			//	state->pictqSemaphore.signal();	
 			//}
-
-			if(f_delay >= 10 && f_delay < 15)
-				f_delay = 10;
-			if(f_delay >= 15 && f_delay < 20)
-				f_delay = 15;
-			if(f_delay >= 20 && f_delay < 25)
-				f_delay = 20;
-			if(f_delay >= 25 && f_delay < 30)
-				f_delay = 25;
-			if(f_delay >= 30 && f_delay < 35)
-				f_delay = 30;
-			if(f_delay >= 35 && f_delay < 40)
-				f_delay = 35;
-			if(f_delay >= 40 && f_delay < 45)
-				f_delay = 40;
-			if(f_delay >= 45 && f_delay < 50)
-				f_delay = 45;
-			if(f_delay >= 50 && f_delay < 55)
-				f_delay = 50;
-			if(f_delay >= 55 && f_delay < 60)
-				f_delay = 55;
 
 			return f_delay;
 		}
@@ -989,19 +1162,33 @@ int ODFfmpegSource::video_refresh_timer_next(char *dataBuff, int pboIndex, doubl
 
 	if(state->codecCtx_)
 	{
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-		state->pictqMutex.grab();
+	state->pictqMutex.grab();
 #else
-		WaitForSingleObject(state->pictqMutex, INFINITE);
+	WaitForSingleObject(state->pictqMutex, INFINITE);
+#endif
 #endif
 
 		if(state->pictq_size == 0)
 		{
 			//printf("state->pictq_size: %d\n", state->pictq_size);
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-			state->pictqMutex.release();
+	state->pictqMutex.release();
 #else
-			ReleaseMutex(state->pictqMutex);
+	ReleaseMutex(state->pictqMutex);
+#endif
 #endif
 			//if(atVideoEnd_)
 			if(state->quit)
@@ -1020,13 +1207,8 @@ int ODFfmpegSource::video_refresh_timer_next(char *dataBuff, int pboIndex, doubl
 	//			return -1*50;
 	//		}
 
-		if(decoderReachedEnd)
+		if(state->decoderReachedEnd)
 		{
-	#ifdef USE_ODBASE
-				state->pictqMutex.release();
-	#else
-				ReleaseMutex(state->pictqMutex);
-	#endif
 			//printf(")))video_refresh_timer_next - decoder reached end is -50\n\n");
 			return -50;
 		}
@@ -1041,10 +1223,17 @@ int ODFfmpegSource::video_refresh_timer_next(char *dataBuff, int pboIndex, doubl
 		//}
 		else
 		{
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-			state->pictqMutex.release();
+	state->pictqMutex.release();
 #else
-			ReleaseMutex(state->pictqMutex);
+	ReleaseMutex(state->pictqMutex);
+#endif
 #endif
 			
 #if 1
@@ -1132,19 +1321,33 @@ int ODFfmpegSource::video_refresh_timer_next(char *dataBuff, int pboIndex, doubl
 					state->pictq_rindex = 0;
 
 				//printf("\tGrabbing video mutex\n");
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-				state->pictqMutex.grab();
+	state->pictqMutex.grab();
 #else
-				WaitForSingleObject(state->pictqMutex, INFINITE);
+	WaitForSingleObject(state->pictqMutex, INFINITE);
+#endif
 #endif
 				//WaitForSingleObject(pictqMutex, INFINITE);
 				state->pictq_size--;
 				//printf("out pictq_size: %d.\n", state->pictq_size);
 				//ReleaseMutex(pictqMutex);
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-				state->pictqMutex.release();
+	state->pictqMutex.release();
 #else
-				ReleaseMutex(state->pictqMutex);
+	ReleaseMutex(state->pictqMutex);
+#endif
 #endif
 
 #ifdef USE_ODBASE
@@ -1221,6 +1424,14 @@ void scale_video()
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #ifdef AUDIO_DECODING
+bool ODFfmpegSource::hasAudiostream()
+{
+	if (state->audioStreamIndex_ == -1)
+		return false;
+
+	return true;
+}
+
 /* Returns information about the given audio stream. Returns 0 on success. */
 int ODFfmpegSource::getAVAudioInfo(unsigned int *rate, int *channels, int *type)
 {
@@ -1614,17 +1825,39 @@ ODFfmpegSource::State::State(ODFfmpegSource* parent) :
 	//pictqSemaphore = CreateSemaphore( NULL, 0 , 1, NULL);
 	//pictqSemaphore = Semaphore( "pictqSemaphore" );
 
+#ifdef  USE_CRITICAL_SECTION
+	/* Initialize the critical section before entering multi-threaded context. */
+    InitializeCriticalSection(&audioqMutex);
+	InitializeCriticalSection(&pictqMutex);
+	InitializeCriticalSection(&videoqMutex);
+#endif
+
+#ifdef USE_MUTEX
 	audioqMutex = CreateMutex(NULL, false, NULL);
 	pictqMutex = CreateMutex(NULL, false, NULL);
+	videoqMutex = CreateMutex(NULL, false, NULL);
+#endif
+
 	pictqSemaphore = CreateSemaphore( NULL, 0 , 1, NULL);
 	pictPacketqSemaphore = CreateSemaphore( NULL, 0 , 1, NULL);
-	videoqMutex = CreateMutex(NULL, false, NULL);
 
 }
 
 ODFfmpegSource::State::~State()
 {
     parent_->close();
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Initialize the critical section before entering multi-threaded context. */
+    DeleteCriticalSection(&audioqMutex);
+	DeleteCriticalSection(&pictqMutex);
+	DeleteCriticalSection(&videoqMutex);
+#endif
+
+#ifndef USE_ODBASE
+	CloseHandle(pictqSemaphore);
+	CloseHandle(pictPacketqSemaphore);
+#endif
 }
 
 ODFfmpegSource::ODFfmpegSource(const std::string& name, 
@@ -1675,7 +1908,7 @@ ODFfmpegSource::ODFfmpegSource(const std::string& name,
 
 	//state->desiredRawFormat_ = PIX_FMT_YUV420P;
 
-	decoderReachedEnd = false;
+	state->decoderReachedEnd = false;
 
 
 	numChannels_ = 2;
@@ -1945,6 +2178,7 @@ bool ODFfmpegSource::open(const std::string& videoFileName)
 	{
 		state->video_current_pts_time = av_gettime();
 		state->frame_timer = av_gettime() / 1000000.0;
+		//state->frame_timer = 0;//av_gettime() / 1000000.0;
 		state->frame_timer_start = state->frame_timer;
 //		state->frame_timer = 0;
 		state->frame_last_delay = 40e-3;
@@ -2021,11 +2255,15 @@ void ODFfmpegSource::close()
 
 #ifdef AUDIO_DECODING
 	if (state->audioStreamIndex_ >= 0)
-		clearAudioPackets();
+		//clearAudioPackets();
+		audio_packet_queue_flush(&(state->audioq));
 #endif
 #ifdef VIDEO_DECODING
 	if (state->videoStreamIndex_ >= 0)
+	{
+		video_packet_queue_flush(&(state->videoq));
 		clearQueuedFrames();
+	}
 #endif
 
 	if (state->decodeCtx_ != NULL) {
@@ -2150,43 +2388,70 @@ int ODFfmpegSource::queue_picture(AVFrame *pFrame, double pts)
 	//SDL_LockMutex(is->pictq_mutex);
 	//WaitForSingleObject(pictqMutex, INFINITE);
 	//printf("Grabbing decoder mutex\n");
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	state->pictqMutex.grab();
 #else
 	WaitForSingleObject(state->pictqMutex, INFINITE);
 #endif
+#endif
 	//while(state->pictq_size >= VIDEO_PICTURE_QUEUE_SIZE)
 	while(state->pictq_size >= VIDEO_PICTURE_QUEUE_SIZE && !state->quit)
 	{
-#ifdef USE_ODBASE
-		state->pictqMutex.release();
-#else
-		ReleaseMutex(state->pictqMutex);
-#endif
+		#ifdef  USE_CRITICAL_SECTION
+			/* Leave the critical section -- other threads can now EnterCriticalSection() */
+			LeaveCriticalSection(&state->pictqMutex);
+		#endif
+
+		#ifdef USE_MUTEX
+		#ifdef USE_ODBASE
+			state->pictqMutex.release();
+		#else
+			ReleaseMutex(state->pictqMutex);
+		#endif
+		#endif
 		//ReleaseMutex(pictqMutex);
 //		printf("- Waiting for space in pictq: %d\n", state->pictq_size );
-#ifdef USE_ODBASE
-		state->pictqSemaphore.wait();
-#else
-		WaitForSingleObject(state->pictqSemaphore,INFINITE);
-#endif
+		#ifdef USE_ODBASE
+			state->pictqSemaphore.wait();
+		#else
+			WaitForSingleObject(state->pictqSemaphore, INFINITE);
+		#endif
 
+		#ifdef  USE_CRITICAL_SECTION
+			/* Enter the critical section -- other threads are locked out */
+			EnterCriticalSection(&state->pictqMutex);
+		#endif
 
-#ifdef USE_ODBASE
-		state->pictqMutex.grab();
-#else
-		WaitForSingleObject(state->pictqMutex, INFINITE);
-#endif
+		#ifdef USE_MUTEX
+		#ifdef USE_ODBASE
+			state->pictqMutex.grab();
+		#else
+			WaitForSingleObject(state->pictqMutex, INFINITE);
+		#endif
+		#endif
 		//WaitForSingleObject(pictqSemaphore,INFINITE);
 		//printf("* Filling pictq: %d\n", state->pictq_size );
 		//return -1;
 		// Wait
 		//SDL_CondWait(is->pictq_cond, is->pictq_mutex);
 	}
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-		state->pictqMutex.release();
+	state->pictqMutex.release();
 #else
-		ReleaseMutex(state->pictqMutex);
+	ReleaseMutex(state->pictqMutex);
+#endif
 #endif
 	//ReleaseMutex(pictqMutex);
 	//SDL_UnlockMutex(is->pictq_mutex);
@@ -2321,10 +2586,17 @@ int ODFfmpegSource::queue_picture(AVFrame *pFrame, double pts)
 			//SDL_LockMutex(is->pictq_mutex);
 			
 			//printf("\tGrabbing decoder2 mutex\n");
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-			state->pictqMutex.grab();
+	state->pictqMutex.grab();
 #else
-			WaitForSingleObject(state->pictqMutex, INFINITE);
+	WaitForSingleObject(state->pictqMutex, INFINITE);
+#endif
 #endif
 
 			//WaitForSingleObject(pictqMutex, INFINITE);
@@ -2333,10 +2605,17 @@ int ODFfmpegSource::queue_picture(AVFrame *pFrame, double pts)
 			//printf("in %s -  pictq_size: %d\n", videoFileName_.c_str(), state->pictq_size);
 			//printf("in  - pictq_size: %d\n", state->pictq_size);
 			//ReleaseMutex(pictqMutex);
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-			state->pictqMutex.release();
+	state->pictqMutex.release();
 #else
-			ReleaseMutex(state->pictqMutex);
+	ReleaseMutex(state->pictqMutex);
+#endif
 #endif
 			//SDL_UnlockMutex(is->pictq_mutex);
 			// Release pictq_mutex mutex
@@ -2649,7 +2928,11 @@ bool ODFfmpegSource::advanceFrame(int numFrames)
 		//return false;
 
 	// Check if audio/video queues are full, if the video is paused or at the end.
-	if(state->audioq.size > MAX_AUDIOQ_SIZE || state->videoq.size > MAX_VIDEOQ_SIZE || atVideoEnd_ || state->isPaused)
+#ifdef AUDIO_DECODING
+	if((state->audioq.size > MAX_AUDIOQ_SIZE && state->videoq.size > MAX_VIDEOQ_SIZE) || atVideoEnd_ || state->isPaused)
+#else
+	if(state->videoq.size > MAX_VIDEOQ_SIZE || atVideoEnd_ || state->isPaused)
+#endif
 	{
 		Sleep(10);
 		return true;
@@ -2812,8 +3095,12 @@ bool ODFfmpegSource::decodeVideoFrame()
 		if(qRet < 0) //
 		{
 			//return -1;
+			state->decoderReachedEnd = true;
+			state->quit = true;
+			printf("No more packets - Quitting video--->.\n");
 			return false;
 			//continue;
+
 		}
 		//else if (qRet == 0) //Return -1 to signal that the queue is currently empty and that the calling thread should sleep.
 		//{
@@ -2834,37 +3121,66 @@ bool ODFfmpegSource::decodeVideoFrame()
 		if(packet.data == end_pkt.data) {
 			printf("Videoq pkq = END\n");
 
-			decoderReachedEnd = true;
+			state->decoderReachedEnd = true;
 			//return true;
 
 			//clearQueuedFrames();
 			//avcodec_flush_buffers(state->codecCtx_);
 
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-				state->pictqMutex.grab();
+	state->pictqMutex.grab();
 #else
-				WaitForSingleObject(state->pictqMutex, INFINITE);
+	WaitForSingleObject(state->pictqMutex, INFINITE);
+#endif
 #endif
 				while(state->pictq_size != 0 || !state->quit)
 				//while(/*state->pictq_size != 0 && */!state->quit)
 				{
 					//printf("Waiting for video queue to empty - size: %d.\n", state->pictq_size);
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-					state->pictqMutex.release();
+	state->pictqMutex.release();
 #else
-					ReleaseMutex(state->pictqMutex);
+	ReleaseMutex(state->pictqMutex);
+#endif
 #endif
 					Sleep(10);
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-					state->pictqMutex.grab();
+	state->pictqMutex.grab();
 #else
-					WaitForSingleObject(state->pictqMutex, INFINITE);
-#endif				
+	WaitForSingleObject(state->pictqMutex, INFINITE);
+#endif
+#endif	
 				}
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-				state->pictqMutex.release();
+	state->pictqMutex.release();
 #else
-				ReleaseMutex(state->pictqMutex);
+	ReleaseMutex(state->pictqMutex);
+#endif
 #endif
 				state->quit = true;
 				printf("Quitting video--->.\n");
@@ -2959,6 +3275,9 @@ bool ODFfmpegSource::decodeVideoFrame()
 		if(queue_picture(state->nativeFrame_, pts) < 0)
 		{
 			printf("\nCould not queue PICTURE\n");
+			state->decoderReachedEnd = true;
+			state->quit = true;
+			printf("Quitting video--->.\n");
 			return false;
 			//break;
 		}
@@ -3037,12 +3356,19 @@ void ODFfmpegSource::clearQueuedFrames()
 	{
 		if(state->codecCtx_!= NULL)
 		{
-#ifdef USE_ODBASE
-			state->pictqMutex.grab();
-#else
-			WaitForSingleObject(state->pictqMutex, INFINITE);
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->pictqMutex);
 #endif
-			printf("\nClearing video queue.\n");
+
+#ifdef USE_MUTEX
+#ifdef USE_ODBASE
+	state->pictqMutex.grab();
+#else
+	WaitForSingleObject(state->pictqMutex, INFINITE);
+#endif
+#endif
+			printf("Clearing video queue.\n");
 			VideoPicture *vp;
 			for(int i=0; i<VIDEO_PICTURE_QUEUE_SIZE; i++)
 			{
@@ -3066,10 +3392,17 @@ void ODFfmpegSource::clearQueuedFrames()
 			
 			state->pictq_size = 0;
 			
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&state->pictqMutex);
+#endif
+
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
-			state->pictqMutex.release();
+	state->pictqMutex.release();
 #else
-			ReleaseMutex(state->pictqMutex);
+	ReleaseMutex(state->pictqMutex);
+#endif
 #endif
 		}
 	}
@@ -3081,10 +3414,16 @@ void ODFfmpegSource::clearQueuedFrames()
  */
 void ODFfmpegSource::clearAudioPackets()
 {
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&state->audioqMutex);
+#endif
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	state->audioqMutex.grab();
 #else
 	WaitForSingleObject(state->audioqMutex, INFINITE);
+#endif
 #endif
 	if(state->formatCtx_ != NULL)
 	{
@@ -3109,10 +3448,15 @@ void ODFfmpegSource::clearAudioPackets()
 		//}
 	}
 	
+#ifdef  USE_CRITICAL_SECTION
+	LeaveCriticalSection(&state->audioqMutex);
+#endif
+#ifdef USE_MUTEX
 #ifdef USE_ODBASE
 	state->audioqMutex.release();
 #else
 	ReleaseMutex(state->audioqMutex);
+#endif
 #endif
 }
 #endif

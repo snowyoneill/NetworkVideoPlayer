@@ -17,7 +17,7 @@ extern bool		g_preloadAudio;
 extern int		g_bufferSize;
 
 
-extern double g_netAudioClock[MAXSTREAMS];
+extern double g_AudioClock[MAXSTREAMS];
 extern double preClock[MAXSTREAMS];
 extern double nextFrameDelay[MAXSTREAMS];
 extern double g_Delay[MAXSTREAMS];
@@ -26,9 +26,8 @@ extern double diff[MAXSTREAMS];
 extern double preTime[MAXSTREAMS];
 extern double pts[MAXSTREAMS];
 extern double frameTimeDiff[MAXSTREAMS];
-extern double g_newClock[MAXSTREAMS];
 
-extern enum	 {astop, aplay, apause, invalid};
+extern enum	 {astop, aplay, apause, invalid, pboUplDone};
 extern int	 status[MAXSTREAMS];
 extern double fps[MAXSTREAMS], duration[MAXSTREAMS];
 extern int	 inwidth[MAXSTREAMS], inheight[MAXSTREAMS];
@@ -44,6 +43,10 @@ void initVideoAudioPlayback(char *serverIP, int audioServerTCPPort, int audioSer
 void closeAudioEnv();
 ///////////////////////////////////////////// LOAD FFS/VIDEO //////////////////////////////////////////////////
 void initvideo();
+void cleanUpPbosAndTextures(int videounit);
+void shutdownUploadThread(int side);
+void checkCommandMessages();
+void deletePbos(int side);
 
 ////////////////////////////////////////////// FFS PLAYBACK //////////////////////////////////////////////////
 bool loadffs(const char* path, int videounit);
@@ -72,9 +75,9 @@ double getOpenALAudioClock(int side);
 double getFFmpegClock(int side);
 #endif
 
-void updateVideoDraw();
 void updateVideoCallback(void* arg);
-//void updateVideoCallback();
+void updateVideoDraw();
+void updateVideoDraw2();
 
 ////////////////////////////////// MAIN ///////////////////////////////////
 bool audioClientSetup();

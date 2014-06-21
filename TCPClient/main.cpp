@@ -59,6 +59,8 @@ extern bool stopAudioThread;
 extern FILE *videoDebugLogFile;
 #endif
 
+extern bool stopUploadThread[MAXSTREAMS];
+
 int		core;
 int		fbowidth, fboheight, debug, width, height;
 GLuint	fbo,framebuffer, stencil, background;
@@ -69,6 +71,9 @@ CImage Image;
 #endif
 GLuint bgTexture;
 
+bool broadcastAudio = false;
+
+int clientID		= 1;
 //int stream				= 0;
 bool backgroundEnabled	= false;
 bool enableVSync		= false;
@@ -98,7 +103,8 @@ double	g_Delay[MAXSTREAMS];
 texture_atlas_t *atlas;
 vertex_buffer_t *text_buffer;
 vertex_buffer_t *text_buffer2;
-texture_font_t *font;
+vertex_buffer_t *text_buffer3;
+texture_font_t *font, *Lfont;
 
 typedef struct {
     float x, y, z;    // position
@@ -503,6 +509,13 @@ int InitGL()
 	printf("RENDERER : %s\n", glGetString(GL_RENDERER));
 	printf("VERSION : %s\n", glGetString(GL_VERSION));
 
+	//if(!glGet("GL_ARB_texture_non_power_of_two"))
+	if (!glewIsSupported("GL_ARB_texture_non_power_of_two"))
+		printf("NPOT not supported\n");
+	else
+		printf("NPOT supported\n");
+
+
 #ifndef USE_GLEW
 	//if(isExtensionSupported("GL_EXT_framebuffer_object"))
 		LoadGlExtensions();
@@ -579,7 +592,7 @@ int Init(char* cmdline)
 	char* serverIP		= "127.0.0.1";
 	int tcpPort			= 2007;
 	int udpPort			= 2008;
-	int clientID		= 1;
+	//int clientID		= 1;
 	int streamID		= 0;
 	strcpy(videoName,   "sample1.mp4");
 	//videoName			= "sample1.mp4";
@@ -816,6 +829,16 @@ int Init(char* cmdline)
 			else
 				printUsageAndDie(argv[0], true);
 		}
+		else if( stricmp(argv[currArgPos], "-Broadcast") == 0 )
+		{
+			if(strcmp("true", argv[currArgPos + 1]) == 0)
+				broadcastAudio = true;
+			else if(strcmp("false", argv[currArgPos + 1]) == 0)
+				broadcastAudio = false;
+			else
+				printUsageAndDie(argv[0], true);
+			currArgPos += 2;
+		}
 		else
 			currArgPos++;
 	}
@@ -914,6 +937,17 @@ int Init(char* cmdline)
                                      L"@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_"
                                      L"`abcdefghijklmnopqrstuvwxyz{|}~");
     //texture_font_load_glyphs( font, text);
+
+    /* Build a new texture font from its description and size */
+	Lfont = texture_font_new( atlas, "./Vera.ttf", 76 );
+
+   /* Build a new vertex buffer (position, texture & color) */
+    text_buffer3 = vertex_buffer_new( "v3f:t2f:c4f" );
+
+    /* Cache some glyphs to speed things up */
+    texture_font_load_glyphs( Lfont, L" !\"#$%&'()*+,-./0123456789:;<=>?"
+                                     L"@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_"
+                                     L"`abcdefghijklmnopqrstuvwxyz{|}~");
 
 	drawInitialText();
 
@@ -1265,8 +1299,20 @@ void CalculateFrameRate()
 
 /* Check the current mouse position and set the current video accordingly.
  */
-void checkMouse()
+void checkMouse(int side, double curTime)
 {
+	if(help) {
+		if(mouse_y > fboheight - 40)
+		{
+			float percent = mouse_x / (float)fbowidth;
+			float newSeekTime = percent * duration[side];
+
+			float seekDur = newSeekTime - curTime;
+			//printf("mouse_x: %d - percent: %09.6f - newSeekTime: %09.6f - seekDur: %09.6f\n", mouse_x, percent, newSeekTime, seekDur);
+			seekVideo(currentVideo, seekDur);
+		}
+	}
+
 #if MAXSTREAMS  == 2
 	if(mouse_x < fbowidth/2)
 		currentVideo = 0;
@@ -1299,14 +1345,13 @@ void checkMouse()
 	//	fullScreenVideo = 3;
 #endif
 	//printf("mouse_x: %d - mouse_y: %d\n", mouse_x, mouse_y);
+	mouse_y = mouse_x = -1;
 }
 
 /* Print out the current video debug info.
  */
-void printVideoDebugInfo(int side, int lx, int ly)
+void printVideoDebugInfo(int side, int lx, int ly, double curTime)
 {
-	double curTime = g_newClock[side];//currGlobalTimer[side]+diff[side];
-
 #ifdef WGL_FONTS
 			glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 			char buffer[255];
@@ -1365,7 +1410,7 @@ void printVideoDebugInfo(int side, int lx, int ly)
 				Font->setposition(fbowidth-90.0f, 35.0f);
 				Font->displaytext(buffer);
 			#ifdef NETWORKED_AUDIO
-			sprintf(buffer, "%3f", g_netAudioClock[side]);
+			sprintf(buffer, "%3f", g_AudioClock[side]);
 			#else
 			sprintf(buffer, "%3f", -1.0f);
 			#endif
@@ -1445,9 +1490,9 @@ void printVideoDebugInfo(int side, int lx, int ly)
 	pen.x += lx;
 	pen.y += ly;
 #if NETWORKED_AUDIO
-	swprintf (dText, 256, L"%s", L"System -> NET_AUDIO_CLOCK:", g_netAudioClock[side]);
+	swprintf (dText, 256, L"%s", L"System -> NET_AUDIO_CLOCK:", g_AudioClock[side]);
 #else
-	swprintf (dText, 256, L"%s", L"System -> OAL_AUDIO_CLOCK:", g_netAudioClock[side]);
+	swprintf (dText, 256, L"%s", L"System -> OAL_AUDIO_CLOCK:", g_AudioClock[side]);
 #endif
 	freetype_add_text( text_buffer2, font, dText, &black, &pen );
 
@@ -1522,7 +1567,7 @@ void printVideoDebugInfo(int side, int lx, int ly)
 	pen.y = 65.0f;
 	pen.x += lx;
 	pen.y += ly;
-	swprintf (dText, 256, L"%09.4f", g_netAudioClock[side]);
+	swprintf (dText, 256, L"%09.4f", g_AudioClock[side]);
 	freetype_add_text( text_buffer2, font, dText, &black, &pen );
 
 	pen.x = fbowidth-90.0f;
@@ -1584,6 +1629,23 @@ void printVideoDebugInfo(int side, int lx, int ly)
 #endif
 }
 
+void toggleVSync(bool mode)
+{
+	if(mode)
+	{
+		enableVSync = true;
+
+			wglSwapIntervalEXT(1);
+			printf("V-sync enabled.\n");
+	}
+	else
+	{
+		enableVSync = false;
+
+			wglSwapIntervalEXT(0);
+			printf("V-sync disabled.\n");
+	}
+}
 
 /* Main draw loop.
  */
@@ -1591,7 +1653,11 @@ void DrawGLScene()
 {
 	double profileTime = getGlobalVideoTimer(currentVideo);
 
-	checkMouse();
+	//double curTime = g_AudioClock[currentVideo];
+	double curTime = pts[currentVideo];
+	//double curTime = currGlobalTimer[currentVideo] + diff[currentVideo] + g_Delay[currentVideo];//+frameTimeDiff[currentVideo];
+
+	checkMouse(currentVideo, curTime);
 	// Set the current context.
 	//if(!wglMakeCurrent(getHDC(), getHRC()))
 	//	printf("Couldn't make current.\n");
@@ -1605,19 +1671,21 @@ void DrawGLScene()
 	glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);	// Unbind the FBO
 	ReSizeGLScene(fbowidth, fboheight);
 */
+	checkCommandMessages();
+
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
 	///////////////////////////////// Draw video player texture ////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
 #if 1
 	glClear(GL_COLOR_BUFFER_BIT);
-	int vOffset = 40;
+	int vOffset = 10;
 
 	//glColor4f(1, 1, 1, 1.0);
 	glEnable(GL_TEXTURE_2D);
 	//glBindTexture(GL_TEXTURE_2D, framebuffer);
 	#ifdef VIDEO_PLAYBACK
 	if(multiTimer)
-		updateVideoDraw();
+		updateVideoDraw2();
 	else
 		updateVideo();
 	#endif
@@ -1625,55 +1693,27 @@ void DrawGLScene()
 	if(!fullScreenVideo)
 	{
 		// Draw video texture
-	#if MAXSTREAMS==1
-		if(status[0] != astop)
-		{
-			glBindTexture(GL_TEXTURE_2D, videotextures[0]);
-			glBegin(GL_QUADS);
-				glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  vOffset);
-				glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , vOffset);
-				glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight-vOffset);
-				glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
-			glEnd();
-		}
-	#endif		
-	#if MAXSTREAMS==2
-		if(status[0] != astop)
-		{
-			glBindTexture(GL_TEXTURE_2D, videotextures[0]);
-			glBegin(GL_QUADS);
-				glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  vOffset);
-				glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2 , vOffset);
-				glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
-				glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
-			glEnd();
-		}
-
-		if(status[1] != astop)
-		{
-			glBindTexture(GL_TEXTURE_2D, videotextures[1]);
-			glBegin(GL_QUADS);
-				glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  vOffset);
-				glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , vOffset);
-				glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight-vOffset);
-				glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
-			glEnd();
-		}
-	#endif
-	#if MAXSTREAMS==4
-		//printf("fullScreenVideo: %d\n", fullScreenVideo );
-		if(!fullScreenVideo)
-		{
+		#if MAXSTREAMS==1
 			if(status[0] != astop)
 			{
 				glBindTexture(GL_TEXTURE_2D, videotextures[0]);
 				glBegin(GL_QUADS);
-				{
+					glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  vOffset);
+					glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , vOffset);
+					glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight-vOffset);
+					glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
+				glEnd();
+			}
+		#endif		
+		#if MAXSTREAMS==2
+			if(status[0] != astop)
+			{
+				glBindTexture(GL_TEXTURE_2D, videotextures[0]);
+				glBegin(GL_QUADS);
 					glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  vOffset);
 					glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2 , vOffset);
-					glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight/2);
-					glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight/2);
-				}
+					glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
+					glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
 				glEnd();
 			}
 
@@ -1681,43 +1721,71 @@ void DrawGLScene()
 			{
 				glBindTexture(GL_TEXTURE_2D, videotextures[1]);
 				glBegin(GL_QUADS);
-				{
 					glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  vOffset);
 					glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , vOffset);
-					glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight/2);
-					glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight/2);
-				}
-				glEnd();
-			}
-
-			if(status[2] != astop)
-			{
-				glBindTexture(GL_TEXTURE_2D, videotextures[2]);
-				glBegin(GL_QUADS);
-				{
-					glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  fboheight/2);
-					glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2, fboheight/2);
-					glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
-					glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
-				}
-				glEnd();
-			}
-
-			if(status[3] != astop)
-			{
-				glBindTexture(GL_TEXTURE_2D, videotextures[3]);
-				glBegin(GL_QUADS);
-				{
-					glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  fboheight/2);
-					glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , fboheight/2);
 					glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight-vOffset);
 					glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
-				}
 				glEnd();
 			}
-		}
-		//glDisable(GL_TEXTURE_2D);
-	#endif
+		#endif
+		#if MAXSTREAMS==4
+			//printf("fullScreenVideo: %d\n", fullScreenVideo );
+			if(!fullScreenVideo)
+			{
+				if(status[0] != astop)
+				{
+					glBindTexture(GL_TEXTURE_2D, videotextures[0]);
+					glBegin(GL_QUADS);
+					{
+						glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  vOffset);
+						glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2 , vOffset);
+						glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight/2);
+						glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight/2);
+					}
+					glEnd();
+				}
+
+				if(status[1] != astop)
+				{
+					glBindTexture(GL_TEXTURE_2D, videotextures[1]);
+					glBegin(GL_QUADS);
+					{
+						glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  vOffset);
+						glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , vOffset);
+						glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight/2);
+						glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight/2);
+					}
+					glEnd();
+				}
+
+				if(status[2] != astop)
+				{
+					glBindTexture(GL_TEXTURE_2D, videotextures[2]);
+					glBegin(GL_QUADS);
+					{
+						glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  fboheight/2);
+						glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2, fboheight/2);
+						glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
+						glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
+					}
+					glEnd();
+				}
+
+				if(status[3] != astop)
+				{
+					glBindTexture(GL_TEXTURE_2D, videotextures[3]);
+					glBegin(GL_QUADS);
+					{
+						glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  fboheight/2);
+						glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , fboheight/2);
+						glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight-vOffset);
+						glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
+					}
+					glEnd();
+				}
+			}
+			//glDisable(GL_TEXTURE_2D);
+		#endif
 	}
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////// Draw background logo texture ////////////////////////////////////////////
@@ -1729,80 +1797,80 @@ void DrawGLScene()
 		//glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 		//glEnable(GL_TEXTURE_2D);
 		glBindTexture(GL_TEXTURE_2D, bgTexture);
-#if MAXSTREAMS==1
-	if(backgroundEnabled && status[0] == astop)
-	{
-		glBegin(GL_QUADS);
-			glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  0);
-			glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , 0);
-			glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight);
-			glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight);
-		glEnd();
-	}
-#elif MAXSTREAMS==2
-	if(backgroundEnabled)// && status[0] == astop && status[1] == astop)
-	{
-		if(status[0] == astop)
+		#if MAXSTREAMS==1
+		if(backgroundEnabled && status[0] == astop)
 		{
-		glBegin(GL_QUADS);
-			glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  0);
-			glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2 , 0);
-			glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight);
-			glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight);
-		glEnd();
+			glBegin(GL_QUADS);
+				glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  0);
+				glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , 0);
+				glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight);
+				glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight);
+			glEnd();
 		}
-		if(status[1] == astop)
+		#elif MAXSTREAMS==2
+		if(backgroundEnabled)// && status[0] == astop && status[1] == astop)
 		{
-		glBegin(GL_QUADS);
-			glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  0);
-			glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , 0);
-			glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight);
-			glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight);
-		glEnd();
+			if(status[0] == astop)
+			{
+			glBegin(GL_QUADS);
+				glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  0);
+				glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2 , 0);
+				glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight);
+				glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight);
+			glEnd();
+			}
+			if(status[1] == astop)
+			{
+			glBegin(GL_QUADS);
+				glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  0);
+				glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , 0);
+				glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight);
+				glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight);
+			glEnd();
+			}
 		}
-	}
-#elif MAXSTREAMS==4
-	if(backgroundEnabled)// && status[0] == astop && status[1] == astop && status[2] == astop && status[3] == astop)
-	{
-		if(status[0] == astop)
+		#elif MAXSTREAMS==4
+		if(backgroundEnabled)// && status[0] == astop && status[1] == astop && status[2] == astop && status[3] == astop)
 		{
-		glBegin(GL_QUADS);
-			glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  vOffset);
-			glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2 , vOffset);
-			glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight/2);
-			glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight/2);
-		glEnd();
-		}
-		if(status[1] == astop)
-		{
-		glBegin(GL_QUADS);
-			glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  vOffset);
-			glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , vOffset);
-			glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight/2);
-			glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight/2);
-		glEnd();
-		}
+			if(status[0] == astop)
+			{
+			glBegin(GL_QUADS);
+				glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  vOffset);
+				glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2 , vOffset);
+				glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight/2);
+				glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight/2);
+			glEnd();
+			}
+			if(status[1] == astop)
+			{
+			glBegin(GL_QUADS);
+				glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  vOffset);
+				glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , vOffset);
+				glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight/2);
+				glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight/2);
+			glEnd();
+			}
 
-		if(status[2] == astop)
-		{
-		glBegin(GL_QUADS);
-			glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  fboheight/2);
-			glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2, fboheight/2);
-			glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
-			glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
-		glEnd();
+			if(status[2] == astop)
+			{
+			glBegin(GL_QUADS);
+				glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  fboheight/2);
+				glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth/2, fboheight/2);
+				glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
+				glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight-vOffset);
+			glEnd();
+			}
+			if(status[3] == astop)
+			{
+			glBegin(GL_QUADS);
+				glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  fboheight/2);
+				glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , fboheight/2);
+				glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight-vOffset);
+				glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
+			glEnd();
+			}
 		}
-		if(status[3] == astop)
-		{
-		glBegin(GL_QUADS);
-			glTexCoord2f(0.0f, 0.0f); glVertex2i( fbowidth/2,  fboheight/2);
-			glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , fboheight/2);
-			glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight-vOffset);
-			glTexCoord2f(0.0f, 1.0f); glVertex2i( fbowidth/2, fboheight-vOffset);
-		glEnd();
-		}
-	}
-#endif
+		#endif
 	}
 #endif
 
@@ -1814,11 +1882,11 @@ void DrawGLScene()
 	//if(status[0] == astop && status[1] == astop && status[2] == astop && status[3] == astop)
 	//	fullScreenVideo = false;
 
+#if 1
 	// Draw current video fullscreen
 	if(fullScreenVideo && status[currentVideo] != astop)
 	{
 		//glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-
 		glBindTexture(GL_TEXTURE_2D, videotextures[currentVideo]);
 		glBegin(GL_QUADS);
 		{
@@ -1830,6 +1898,7 @@ void DrawGLScene()
 		glEnd();
 	}
 	glDisable(GL_TEXTURE_2D);
+#endif
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//////////////////////////////////// Draw time test pattern ////////////////////////////////////////////
@@ -1838,34 +1907,36 @@ void DrawGLScene()
 	// Draw test time test pattern.
 	if(/*fullScreenVideo && */testPattern && status[currentVideo] != astop)
 	{
-		//glColor4f(0.0f, 0.0f, 0.0f, 0.0f);
-		//glBegin(GL_QUADS);
-		//	glVertex2i(fbowidth, 0);
-		//	glVertex2i(fbowidth, fboheight);
-		//	glVertex2i(0, fboheight);
-		//	glVertex2i(0, 0);
-		//glEnd();
+		if(help)
+		{
+			// Black out video texture.
+			glColor4f(0.0f, 0.0f, 0.0f, 0.0f);
+			glBegin(GL_QUADS);
+				glVertex2i(fbowidth, 0);
+				glVertex2i(fbowidth, fboheight);
+				glVertex2i(0, fboheight);
+				glVertex2i(0, 0);
+			glEnd();
+		}
 
 		glEnable(GL_BLEND);
 		//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 		glColor4f(0.0,1.0,1.0,0.75); // half transparency
 
-		double curTime = currGlobalTimer[currentVideo]+diff[currentVideo]+frameTimeDiff[currentVideo];
-		//curTime = g_netAudioClock[currentVideo];
-		//curTime = pts[currentVideo];
-		curTime = g_newClock[currentVideo];
-
 		float percent = curTime / duration[currentVideo];
 
-		int barWidth = fbowidth / 10;
-		double mod = 1/3.0f;//1/fps[currentVideo];
+		const int numBars = 10;
+		const int barWidth = fbowidth / numBars;
+		// Pattern bars scan the screen at mod intervals. (1/1 = 10 bars per second, 1/2 = 20 bars per second e.t.c)
+		//double mod = 1/2.0f;
+		const double mod = 1/double((int(fps[currentVideo]))/numBars);
 		double offset = fmod(curTime, mod) / mod;
 
 		//offset = fmod(pts[currentVideo]*fps[currentVideo],1);
 		//offset = fmod((offset * 30), 1);
 
-		//printf("curTime: %09.6f -> Offset: %09.6f + mod: %09.6f -- (fbowidth*offset): %09.6f\n", curTime, offset, mod, (fbowidth*offset));
+		//printf("curTime: %09.6f -> Offset: %09.6f + mod: %09.6f -- fbowidth: %d - (fbowidth*offset): %d - idx: %d\n", curTime, offset, mod, fbowidth, barWidth * int((fbowidth*offset)/barWidth), int((fbowidth*offset)/barWidth));
 		glBegin(GL_QUADS);
 			//// Sliding pattern
 			//glVertex2i(ceil(fbowidth*offset) +  barWidth, 0);
@@ -1874,14 +1945,14 @@ void DrawGLScene()
 			//glVertex2i(ceil(fbowidth*offset), 0);
 
 			// Bar pattern
-			glVertex2i(barWidth * int(ceil(fbowidth*offset)/barWidth) +  barWidth, 0);
-			glVertex2i(barWidth * int(ceil(fbowidth*offset)/barWidth) +  barWidth, fboheight);
-			glVertex2i(barWidth * int(ceil(fbowidth*offset)/barWidth), fboheight);
-			glVertex2i(barWidth * int(ceil(fbowidth*offset)/barWidth), 0);
+			glVertex2i(barWidth * int((fbowidth*offset)/barWidth) +  barWidth, 0);
+			glVertex2i(barWidth * int((fbowidth*offset)/barWidth) +  barWidth, fboheight);
+			glVertex2i(barWidth * int((fbowidth*offset)/barWidth), fboheight);
+			glVertex2i(barWidth * int((fbowidth*offset)/barWidth), 0);
 		glEnd();
 
+		// Draw seperator lines.
 		//glColor4f(1.0,1.0,1.0,1.0);
-
 		for(int i=0; i<10; i++)
 		{
 			glBegin(GL_QUADS);
@@ -1911,28 +1982,6 @@ void DrawGLScene()
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
 #if 1
 		glEnable(GL_BLEND);
-		//glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_COLOR);
-		//glDisable(GL_TEXTURE_2D);
-		//glColor3f(0.5,0.5,0.5); // half transparency
-		//glBegin(GL_QUADS);
-		//	glVertex2i(fbowidth,0);
-		//	glVertex2i(fbowidth, 140);
-		//	glVertex2i(fbowidth-360,140);
-		//	glVertex2i(fbowidth-360,0);
-		//glEnd();
-		//glBegin(GL_QUADS);
-		//	glVertex2i(0,0);
-		//	glVertex2i(0, 140);
-		//	glVertex2i(340,140);
-		//	glVertex2i(340,0);
-		//glEnd();
-		//glBegin(GL_QUADS);
-		//	glVertex2i(0,fboheight);
-		//	glVertex2i(0, fboheight-40);
-		//	glVertex2i(fbowidth,fboheight-40);
-		//	glVertex2i(fbowidth,fboheight);
-		//glEnd();
-
 		//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		// Draw debug info background quad
 		glColor4f(0.0,0.0,0.0,0.5); // half transparency
@@ -2045,7 +2094,6 @@ void DrawGLScene()
 
 		/* Draw a horizontal bar representing the current position of the specified video source.
 		 */
-		double curTime = currGlobalTimer[currentVideo]+diff[currentVideo];
 		float percent = curTime / duration[currentVideo];
 
 		// Draw AUDIO_VIDEO_SYNC status
@@ -2059,6 +2107,7 @@ void DrawGLScene()
 			//glColor4f(0.0,0.0,1.0,0.75);
 		//printf("%f - %f\n", (1 / fps[currentVideo] * 1000 * 1.25), (1 / fps[currentVideo] * 1000 * 0.75));
 
+		// Draw square status box light.
 		glBegin(GL_QUADS);
 			glVertex2i(fbowidth-10,145);
 			glVertex2i(fbowidth-10,155);
@@ -2075,14 +2124,16 @@ void DrawGLScene()
 			glVertex2i(0, fboheight);
 		glEnd();
 
-		glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 		//glEnable(GL_TEXTURE_2D);
 		//glDisable(GL_BLEND);
 #endif
+	glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////// Draw fonts  /////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+		float testClkScale  = 1.0 * 2;
 
 		static double textTimeDif = 0;
 		textTimeDif += getGlobalVideoTimer(currentVideo);
@@ -2091,120 +2142,138 @@ void DrawGLScene()
 			textTimeDif = textTimeDif-getGlobalVideoTimer(currentVideo);
 			//printf("textTimeDif: %f\n", textTimeDif);
 
-#if 1
-#ifdef USE_FREETYPE_FONTS
-		//glClearColor( 1, 0, 0, 1 );
-		//glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+	#if 1
+	#ifdef USE_FREETYPE_FONTS
+			//glClearColor( 1, 0, 0, 1 );
+			//glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 
-		//vertex_buffer_delete(text_buffer2);
-		//text_buffer2 = vertex_buffer_new( "v3f:t2f:c4f" );
+			//vertex_buffer_delete(text_buffer2);
+			//text_buffer2 = vertex_buffer_new( "v3f:t2f:c4f" );
 
-		vertex_buffer_clear(text_buffer2);
+			vertex_buffer_clear(text_buffer2);
+			vertex_buffer_clear(text_buffer3);
 
-		vec2 pen = {0,0};
-		vec4 black = {1,1,1,1};
-		wchar_t hText[256];
+			vec2 pen = {0,0};
+			vec4 black = {1,1,1,1};
+			wchar_t hText[256];
 
-		if(!fullScreenVideo)
-		{
-#if MAXSTREAMS==1
-			if(status[0] == apause)
+			if(testPattern)
 			{
-				pen.x = fbowidth/2 - 10.0f;
-				pen.y = fboheight/2 + 15.0f;
-				swprintf (hText, 256, L"%s", L"PAUSED");
-				freetype_add_text( text_buffer2, font, hText, &black, &pen );
+				pen.x = 10.0f;
+				pen.y = fboheight/(2*testClkScale) + 15.0f;
+				//pen.x = (fbowidth/2 - 10.0f);
+				//pen.y = fboheight/2 + 15.0f;
+				swprintf (hText, 256, L"%09.6f", curTime);
+				freetype_add_text( text_buffer3, Lfont, hText, &black, &pen );
 			}
-#endif
-#if MAXSTREAMS==2
-			// Draw specified text to screen.
-			if(status[0] == apause)
-			{
-				pen.x = fbowidth/2 - fbowidth/4 - 10.0f;
-				pen.y = fboheight/2 + 15.0f;
-				swprintf (hText, 256, L"%s", L"PAUSED");
-				freetype_add_text( text_buffer2, font, hText, &black, &pen );
-			}
-			if(status[1] == apause)
-			{
-				pen.x = fbowidth/2 + fbowidth/4 - 10.0f;
-				pen.y = fboheight/2 + 15.0f;
-				swprintf (hText, 256, L"%s", L"PAUSED");
-				freetype_add_text( text_buffer2, font, hText, &black, &pen );
-			}
-#endif
-#if MAXSTREAMS==4
-			// Draw specified text to screen.
-			if(status[0] == apause)
-			{
-				pen.x = fbowidth/2 - fbowidth/4 - 10.0f;
-				pen.y = fboheight/2 - fboheight/4 + 15.0f;
-				swprintf (hText, 256, L"%s", L"PAUSED");
-				freetype_add_text( text_buffer2, font, hText, &black, &pen );
-			}
-			if(status[1] == apause)
-			{
-				pen.x = fbowidth/2 + fbowidth/4 - 10.0f;
-				pen.y = fboheight/2 - fboheight/4 + 15.0f;
-				swprintf (hText, 256, L"%s", L"PAUSED");
-				freetype_add_text( text_buffer2, font, hText, &black, &pen );
-			}
-			// Draw specified text to screen.
-			if(status[2] == apause)
-			{
-				pen.x = fbowidth/2 - fbowidth/4 - 10.0f;
-				pen.y = fboheight/2 + fboheight/4 + 15.0f;
-				swprintf (hText, 256, L"%s", L"PAUSED");
-				freetype_add_text( text_buffer2, font, hText, &black, &pen );
-			}
-			if(status[3] == apause)
-			{
-				pen.x = fbowidth/2 + fbowidth/4 - 10.0f;
-				pen.y = fboheight/2 + fboheight/4 + 15.0f;
-				swprintf (hText, 256, L"%s", L"PAUSED");
-				freetype_add_text( text_buffer2, font, hText, &black, &pen );
-			}
-#endif
-		}
-		else
-		{
-			if(status[currentVideo] == apause)
-			{
-				pen.x = fbowidth/2 - 10.0f;
-				pen.y = fboheight/2 + 15.0f;
-				swprintf (hText, 256, L"%s", L"PAUSED");
-				freetype_add_text( text_buffer2, font, hText, &black, &pen );
-			}
-		}
-#endif
 
+			if(!fullScreenVideo)
+			{
+	#if MAXSTREAMS==1
+				if(status[0] == apause)
+				{
+					pen.x = fbowidth/2 - 10.0f;
+					pen.y = fboheight/2 + 15.0f;
+					swprintf (hText, 256, L"%s", L"PAUSED");
+					freetype_add_text( text_buffer2, font, hText, &black, &pen );
+				}
+	#endif
+	#if MAXSTREAMS==2
+				// Draw specified text to screen.
+				if(status[0] == apause)
+				{
+					pen.x = fbowidth/2 - fbowidth/4 - 10.0f;
+					pen.y = fboheight/2 + 15.0f;
+					swprintf (hText, 256, L"%s", L"PAUSED");
+					freetype_add_text( text_buffer2, font, hText, &black, &pen );
+				}
+				if(status[1] == apause)
+				{
+					pen.x = fbowidth/2 + fbowidth/4 - 10.0f;
+					pen.y = fboheight/2 + 15.0f;
+					swprintf (hText, 256, L"%s", L"PAUSED");
+					freetype_add_text( text_buffer2, font, hText, &black, &pen );
+				}
+	#endif
+	#if MAXSTREAMS==4
+				// Draw specified text to screen.
+				if(status[0] == apause)
+				{
+					pen.x = fbowidth/2 - fbowidth/4 - 10.0f;
+					pen.y = fboheight/2 - fboheight/4 + 15.0f;
+					swprintf (hText, 256, L"%s", L"PAUSED");
+					freetype_add_text( text_buffer2, font, hText, &black, &pen );
+				}
+				if(status[1] == apause)
+				{
+					pen.x = fbowidth/2 + fbowidth/4 - 10.0f;
+					pen.y = fboheight/2 - fboheight/4 + 15.0f;
+					swprintf (hText, 256, L"%s", L"PAUSED");
+					freetype_add_text( text_buffer2, font, hText, &black, &pen );
+				}
+				// Draw specified text to screen.
+				if(status[2] == apause)
+				{
+					pen.x = fbowidth/2 - fbowidth/4 - 10.0f;
+					pen.y = fboheight/2 + fboheight/4 + 15.0f;
+					swprintf (hText, 256, L"%s", L"PAUSED");
+					freetype_add_text( text_buffer2, font, hText, &black, &pen );
+				}
+				if(status[3] == apause)
+				{
+					pen.x = fbowidth/2 + fbowidth/4 - 10.0f;
+					pen.y = fboheight/2 + fboheight/4 + 15.0f;
+					swprintf (hText, 256, L"%s", L"PAUSED");
+					freetype_add_text( text_buffer2, font, hText, &black, &pen );
+				}
+	#endif
+			}
+			else
+			{
+				if(status[currentVideo] == apause)
+				{
+					pen.x = fbowidth/2 - 10.0f;
+					pen.y = fboheight/2 + 15.0f;
+					swprintf (hText, 256, L"%s", L"PAUSED");
+					freetype_add_text( text_buffer2, font, hText, &black, &pen );
+				}
+			}
+	#endif
+	#endif
 			// Print the currently selected video debug info.
-			printVideoDebugInfo(currentVideo, 0, 0);
+			printVideoDebugInfo(currentVideo, 0, 0, curTime);
 
+			//CalculateFrameRate();
 		}
-		//else
-		//	printf("Underrun\n");
 
-#ifdef USE_FREETYPE_FONTS
-		//glEnable( GL_BLEND );
-		//glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
-		glEnable( GL_TEXTURE_2D );
-		glBindTexture( GL_TEXTURE_2D, atlas->id );
-		//glBegin(GL_QUADS);
-		//	glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  0);
-		//	glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , 0);
-		//	glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight);
-		//	glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight);
-		//glEnd();
-		vertex_buffer_render( text_buffer, GL_TRIANGLES, "vt" );
-		vertex_buffer_render( text_buffer2, GL_TRIANGLES, "vt" );
+	#if 1
+	#ifdef USE_FREETYPE_FONTS
+			//glEnable( GL_BLEND );
+			//glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
+			
+			glEnable( GL_TEXTURE_2D );
+			glBindTexture( GL_TEXTURE_2D, atlas->id );
+			//glBegin(GL_QUADS);
+			//	glTexCoord2f(0.0f, 0.0f); glVertex2i( 0,  0);
+			//	glTexCoord2f(1.0f, 0.0f); glVertex2i( fbowidth , 0);
+			//	glTexCoord2f(1.0f, 1.0f); glVertex2i( fbowidth, fboheight);
+			//	glTexCoord2f(0.0f, 1.0f); glVertex2i( 0, fboheight);
+			//glEnd();
+			vertex_buffer_render( text_buffer, GL_TRIANGLES, "vt" );
+			vertex_buffer_render( text_buffer2, GL_TRIANGLES, "vt" );
 
-		glBindTexture( GL_TEXTURE_2D, 0);
-		glDisable( GL_TEXTURE_2D );
-		glDisable( GL_BLEND );
-#endif
-#endif
+			glPushMatrix(); // save the current matrix
+			glScalef(testClkScale, testClkScale, 1); // scale the matrix
+			vertex_buffer_render( text_buffer3, GL_TRIANGLES, "vt" );
+			glPopMatrix(); // load the unscaled matrix
+
+			glBindTexture( GL_TEXTURE_2D, 0);
+			glDisable( GL_TEXTURE_2D );
+			glDisable( GL_BLEND );
+	#endif
+	#endif
 	}
+	glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////// End draw ////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2214,6 +2283,10 @@ void DrawGLScene()
 	//glDisable( GL_BLEND );
 
 #endif	
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////
+	///////////////////////////////// End video player texture /////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	//glFlush();
 	//glFinish();
@@ -2256,47 +2329,6 @@ void DrawGLScene()
 
 	//if(timeAfterSwapTime > (1000 / 60.0)+1 )
 	//	printf("=======================Missed V-SYNC\n");
-
-/*
-	if(!enableVSync)
-	{
-		int target = int(ceil(fps[currentVideo]));
-		target *= 2;
-		target = (target < 200) ? 200 : target;
-		//printf("target: %d\n", target);
-		float minFrameTime = 1000/float(target);
-		static float lastTime = 0.0f;
-		static float thisTime   = 0.0f;
-		float deltaTime	= 0.0f;
-
-		//calculate time taken to render last frame (and assume the next will be similar)
-		float currentTime = getGlobalVideoTimer(currentVideo);//GetTickCount();
-		deltaTime = thisTime - lastTime;
-		lastTime = thisTime;
-
-		//limit framerate by sleeping. a sleep call is never really that accurate
-		if (minFrameTime > 0)
-		{
-			float sleepTime = minFrameTime - deltaTime; //add difference to desired deltaTime
-			sleepTime = max(sleepTime, 0); //negative sleeping won't make it go faster :(
-			//printf("SleepTime: %f\n", sleepTime);
-			Sleep(sleepTime);
-		}
-	}
-*/
-
-//static double timestep = 1000/30;
-//static unsigned int t_accum=0,lt=0,ct=0,t=0;
-//
-//    ct = getGlobalVideoTimer(currentVideo);
-//    t_accum += ct - lt;
-//    lt = ct;
-//    while(t_accum >= timestep){
-//        t += timestep; /* this is our actual time, in milliseconds. */
-//        t_accum -= timestep;
-//	}
-
-
 }
 
 #ifdef WGL_FONTS
@@ -2553,14 +2585,15 @@ void upKeyHandle(char key)
 				{
 					playVideo(currentVideo);
 				}
+				setWindowTitle(clientID, videoName);
 			}
 		}
 		else
 			printf("Could not load file.\n");
 	}
 	else if(key == 'E') {
-			shutdownPlayer();
-			//PostQuitMessage(0);	// Send A Quit Message
+			//shutdownPlayer();
+			PostQuitMessage(0);	// Send A Quit Message
     }
     else if(key == 'R')
 	{
@@ -2585,6 +2618,7 @@ void upKeyHandle(char key)
 		{
 			while (!(loadVideo(videoName, currentVideo))){ Sleep(100); /*stopVideo(currentVideo);*/  }
 			playVideo(currentVideo);
+			setWindowTitle(clientID, videoName);
 		}
     }
 	else if (key == VK_ADD) {
@@ -2596,29 +2630,63 @@ void upKeyHandle(char key)
 	else if(key == 'T') {
 		testPattern = !testPattern;
 	}
+	else if(key == 'V')
+	{
+		if(!enableVSync)
+			toggleVSync(true);
+		else
+			toggleVSync(false);
+	}
 #endif
 }
 
-/* Shutdown the video player.
+/* Shutdown the video player. - Must be called by the main OpenGL context.
 */
 void shutdownPlayer()
 {
+#ifdef LOCAL_AUDIO
+		//stopAudioThread = true;
+		closeAudioEnv();
+#endif
+
 #ifdef VIDEO_PLAYBACK
 	for (int i=0; i<MAXSTREAMS; i++)
+	{
 		stopVideo(i);
+		deletePbos(i);
+		shutdownUploadThread(i);
+	}
 
+	
 	printf("All streams stopped\n");
 
-	#ifdef LOCAL_AUDIO
-		//stopAudioThread = true;
-		while(stopAudioThread == true) { 
-			printf("Waiting for audio thread to shutdown...");
-			closeAudioEnv();
+	vertex_buffer_clear(text_buffer);
+	vertex_buffer_delete(text_buffer);
+	vertex_buffer_clear(text_buffer2);
+	vertex_buffer_delete(text_buffer2);
+	vertex_buffer_clear(text_buffer3);
+	vertex_buffer_delete(text_buffer3);
+
+	for (int i=0; i<MAXSTREAMS; i++)
+	{
+		while(stopUploadThread[i]) { 
+			printf("Waiting for pbo upload thread to shutdown...\n");
 			Sleep(100);
 		}
-	#endif
+	}
+
+	cleanUpPbosAndTextures(-1);
+
+#ifdef LOCAL_AUDIO
+	////stopAudioThread = true;
+	//closeAudioEnv();
+	while(stopAudioThread == true) { 
+		printf("Waiting for audio environment to shutdown...\n");
+		Sleep(100);
+	}
+#endif
 	printf("All threads shutdown.\n");
-	PostQuitMessage(0);	// Send A Quit Message
+	//PostQuitMessage(0);	// Send A Quit Message
 	//exit(0);
 #endif
 }
