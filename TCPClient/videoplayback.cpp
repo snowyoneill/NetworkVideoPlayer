@@ -12,12 +12,12 @@
 #include <process.h>
 #include <math.h>
 
-
 #include <Mmsystem.h>
 #pragma comment(lib, "Winmm.lib" )
 
 #ifdef NETWORKED_AUDIO
-#include "netClockSync.h"
+//#include "netClockSync.h"
+#include "netClockSyncWin.h"
 extern int _clientSenderID;
 #endif
 //#define DEBUG_PRINTF
@@ -301,7 +301,6 @@ void initVideoAudioPlayback(char *serverIP, int TCPPort, int UDPPort, int Client
 	// Init global timer.
 	for(int i=0; i<MAXSTREAMS; i++)
 		startGlobalVideoTimer(i);
-
 #ifdef LOG
 		videoDebugLogFile = fopen("log.txt", "w");
 		if(videoDebugLogFile == NULL)
@@ -309,9 +308,9 @@ void initVideoAudioPlayback(char *serverIP, int TCPPort, int UDPPort, int Client
 #endif
 
 #ifdef MULTI_TIMER
-	if(multiTimer)
-		for(int i=0; i<MAXSTREAMS; i++)
-			_beginthread(updateVideoCallback, 0, /*NULL*/(void *)i);
+	//if(multiTimer)
+	//	for(int i=0; i<MAXSTREAMS; i++)
+	//		_beginthread(updateVideoCallback, 0, /*NULL*/(void *)i);
 #endif
 
 //#ifdef MULTI_TIMER
@@ -582,7 +581,9 @@ void playVideo(int videounit, bool sendPlayTCPCommand)
 		diff[videounit] = 0.0;
 		preClock[videounit] = 0.0;
 		totalPauseLength[videounit] = 0.0;
-		frame_timer[videounit] = 0;
+		frame_timer[videounit] = 0.0;
+		frame_last_delay[videounit] = 0.0;
+		frame_last_pts[videounit] = 0.0;
 
 		status[videounit] = aplay;
 
@@ -2664,6 +2665,7 @@ static void CALLBACK TimerFunction(UINT wTimerID, UINT msg, DWORD dwUser, DWORD 
 	int uSide = (int) dwUser;
 
 	timeKillEvent(m_nID[uSide]);
+	//while(true)
 #endif
 	{
 	int i = uSide;
@@ -2679,26 +2681,32 @@ static void CALLBACK TimerFunction(UINT wTimerID, UINT msg, DWORD dwUser, DWORD 
 				static double fDiff;
 				double now = getGlobalVideoTimer(i);
 				double diffT = now - fDiff;
-				//printf("now: %09.6f - last_time: %09.6f - delta: %09.6f(ms) - nextFrameDelay[i]:%09.6f(ms)\n", now, fDiff, diffT, nextFrameDelay[i]);
+				//printf("now: %09.6f - last_time: %09.6f - delta: %09.6f(ms) - nextFrameDelay[i]:%09.6f(ms) - driff: %09.6f(ms)\n", now, fDiff, diffT, nextFrameDelay[i], driff);
 				fDiff = now;
 				{
 					currGlobalTimer[i] = getGlobalVideoTimer(i) / (double)1000;
 					currGlobalTimer[i] -= totalPauseLength[i];
 					preTime[i] = getGlobalVideoTimer(i);
 
+					
 		#ifdef NETWORKED_AUDIO
+					syncThreadCheckMessages(i);
 					double udpAudioClock = netAudioClock[i];
 					g_AudioClock[i] = udpAudioClock;
+
+					static double alpha = 0.75, accumulator = 1.0;
 				#if 1
 					if(preClock[i] == udpAudioClock)
 					{
 						//printf("Repeated network clock...calculating new delta!!! - preClock: %f - udpAudioClock: %f\n", preClock[i], udpAudioClock);
 						udpAudioClock = -1;
+						//printf("diff[i]: %09.6f - accumulator: %09.6f\n", diff[i], accumulator);
+						//diff[i] = accumulator;
 					}
 					else if(udpAudioClock >= 0)// if(preClock[i] < udpAudioClock)
 					{
 						preClock[i] = udpAudioClock;
-						diff[i] = (udpAudioClock-currGlobalTimer[i]);// + g_Delay[i];
+						diff[i] = (udpAudioClock-currGlobalTimer[i]);// + g_Delay[i];						
 					}
 				#endif
 		#elif LOCAL_AUDIO
@@ -2731,9 +2739,11 @@ static void CALLBACK TimerFunction(UINT wTimerID, UINT msg, DWORD dwUser, DWORD 
 						diff[i] = (openALAudioClock-currGlobalTimer[i]);
 					}
 		#endif
+					accumulator = (alpha * diff[i]) + (1.0 - alpha) * accumulator;
+
 					double newClock = currGlobalTimer[i] + diff[i] + g_Delay[i];
 #ifdef NETWORKED_AUDIO
-					//newClock = netAudioClock[i];//%(1/fps[i]);
+					//newClock = netAudioClock[i];
 #endif
 					//#define PRECISION 0.001
 					//newClock -= fmod(newClock,PRECISION);
@@ -2742,7 +2752,7 @@ static void CALLBACK TimerFunction(UINT wTimerID, UINT msg, DWORD dwUser, DWORD 
 #ifdef NETWORKED_AUDIO
 					if(enableDebugOutput)
 						//#ifdef DEBUG_PRINTF
-							fprintf(stdout, "\rNET_AUDIO_CLOCK[%d]: %019.16f(s)-GlobalVideoTimer[%d]: %f(s)-Diff: %09.6f(s)-GEN_AUDIO_CLOCK[%d]: %019.16f(s)", i, g_AudioClock[i], i, 
+							fprintf(stdout, "NET_AUDIO_CLOCK[%d]: %019.16f(s)-GlobalVideoTimer[%d]: %f(s)-Diff: %09.6f(s)-GEN_AUDIO_CLOCK[%d]: %019.16f(s)\n", i, g_AudioClock[i], i, 
 								currGlobalTimer[i], diff[i] + g_Delay[i], i, newClock);
 						//#endif
 #endif
@@ -2817,23 +2827,36 @@ static void CALLBACK TimerFunction(UINT wTimerID, UINT msg, DWORD dwUser, DWORD 
 					else
 						nextFrameDelay[i] = getNextVideoFrame(newClock, totalPauseLength[i], i, rawRGBData[i]);
 #endif
-#if 1
-					//double delay = pboPts - frame_last_pts[i]; /* the pts from last time */
-					//if(delay <= 0 || delay >= 1.0)
-					//{
-					//	/* if incorrect delay, use previous one */
-					//	delay = frame_last_delay[i];
-					//	printf("incorrect delay !!! pbo -> ptsClk: %09.6f...Delay: %f - state->frame_last_pts: %f\n", pboPts, delay, frame_last_pts[i]);
-					//}
-					///* save for next time */
-					//frame_last_delay[i] = delay;
-					//frame_last_pts[i] = pboPts;
-
-					double cDiff =  pboPts - newClock;
-					double delay = 1.0/fps[i];
-					//cDiff -= fmod(cDiff,delay);
 					if(pboPts >= 0)
 					{
+#if 1
+						double delay = pboPts - frame_last_pts[i]; /* the pts from last time */
+						if(delay <= 0 || delay >= 1.0)
+						{
+							if(frame_last_delay[i] <= 0)
+								frame_last_delay[i] = 1/fps[i];
+							/* if incorrect delay, use previous one */
+							delay = frame_last_delay[i];
+							//printf("incorrect delay !!! pbo -> ptsClk: %09.6f...Delay: %f - state->frame_last_pts: %f\n", pboPts, delay, frame_last_pts[i]);
+						}
+						/* save for next time */
+						frame_last_delay[i] = delay;
+						frame_last_pts[i] = pboPts;
+
+						if (PTSSlave)
+						{
+					get_udp:
+							newClock = get_master_clock_udp(pboPts);				
+							if(newClock < 0) {
+								printf("\nmaster exited\n");
+								exit(1);
+							}
+						}
+
+						//newClock = newClock - fmod(newClock,delay);
+						double cDiff =  pboPts - newClock;// + 0.02;
+						//delay = (delay <= 0 ) ? 0.01 : delay;
+						double cDiffPts = cDiff - fmod(cDiff,delay);
 #if 1
 						/* no AV sync correction is done if below the minimum AV sync threshold */
 						#define AV_SYNC_THRESHOLD_MIN 0.01
@@ -2845,85 +2868,83 @@ static void CALLBACK TimerFunction(UINT wTimerID, UINT msg, DWORD dwUser, DWORD 
 						#define FFMIN(a,b) ((a) > (b) ? (b) : (a))
 						#define FFMAX(a,b) ((a) > (b) ? (a) : (b))
 						double max_frame_duration = 10.0;
-						double sync_threshold = FFMAX(AV_SYNC_THRESHOLD_MIN, FFMIN(AV_SYNC_THRESHOLD_MAX, delay));
-						//double sync_threshold = FFMAX(AV_SYNC_THRES, FFMIN(AV_NOSYNC_THRES, delay));
-						if (/*!isnan(cDiff) && f*/abs(cDiff) < max_frame_duration) {
-							if (cDiff <= -sync_threshold)
-								delay = FFMAX(0, delay + cDiff);
-							else if (cDiff >= sync_threshold && delay > AV_SYNC_FRAMEDUP_THRESHOLD)
-								delay = delay + cDiff;
-							else if (cDiff >= sync_threshold)
+						double sync_threshold = FFMAX(AV_SYNC_THRESHOLD_MIN, FFMIN(AV_SYNC_THRESHOLD_MAX, delay));				
+						//sync_threshold = delay;
+						if (/*!isnan(cDiff) && */fabs(cDiff) < max_frame_duration) {
+							if (cDiffPts <= -sync_threshold)
+								delay = FFMAX(0, delay + cDiffPts);
+							else if (cDiffPts >= sync_threshold && delay > AV_SYNC_FRAMEDUP_THRESHOLD)
+								delay = delay + cDiffPts;
+							else if (cDiffPts >= sync_threshold)
 							{
-								cDiff -= fmod(cDiff,delay);
-								delay = delay + cDiff;//2 * delay;
-							}
-						}
-#endif
-#if 0
-						#define AV_NOSYNC_THRES 100.0
-						#define AV_SYNC_THRES 1e-3 //1 millisecond.
-						double sync_threshold = (delay > AV_SYNC_THRES) ? delay : AV_SYNC_THRES;
-						if(fabs(cDiff) < AV_NOSYNC_THRES)
-						{
-							if(cDiff < -sync_threshold)
-							{
-								delay = 0;
-								//speed = 0.5;
-							}
-							else if(cDiff > sync_threshold)
-							{
-								//printf("cDiff b: %f\n", cDiff);
-								cDiff -= fmod(cDiff,delay);
-								//printf("cDiff a: %f\n", cDiff);
-								delay = cDiff;
-								//nextFrameDelay[i] = cDiff * 1000;
-								//timerCB(i, nextFrameDelay[i]);
-								//return;
 								//delay = 2 * delay;
-							}
-							else if(cDiff > sync_threshold * 10)
-							{
-								delay = delay * 10;
+								delay = delay + cDiffPts;
+								//delay = cDiff;
+
+								//Sleep(delay);
+								//syncThreadCheckMessagesBlk(i);
+
+								if(PTSSlave)
+									goto get_udp;
 							}
 						}
 #endif
 						frame_timer[i] += delay;
 						double actual_delay = frame_timer[i] - currGlobalTimer[i];//newClock;
+						
 
 						//delay = cDiff;
-						////printf("cDiff: %09.6f - ", cDiff);
-						//double actual_delay = delay;
-						//printf("delay: %f - frame_timer[i]: %f - newClock: %f - diff: %f\n", frame_timer[i], delay, newClock, frame_timer[i] - newClock);
+						//actual_delay = delay;
+						//printf("pts[i]: %f - newClock: %f - cDiff: %09.6f - cDiffPts: %09.6f - sync_threshold: %f - delay: %f - frame_timer[i]: %f - actual_delay: %f\n", pboPts, newClock, cDiff, cDiffPts, sync_threshold, delay, frame_timer[i], actual_delay);
 						if(actual_delay < 0.01) {
 							/* Really it should skip the picture instead */
 							actual_delay = 0.01;
 
-							//skipFrame(i);
+							//increamentPBORingBuffer(i);
+							////skipFrame(i);
 							//nextFrameDelay[i] = 1;
 							//timerCB(i, nextFrameDelay[i]);
 							//return;
 						}
 						nextFrameDelay[i] = (actual_delay * 1000);
-					}
-#endif
-					//if(nextFrameDelay[i] > 0) {
-					//  const int nearestDivisor = 1;
-					//	int mul = (int)(nextFrameDelay[i]) / nearestDivisor;
-					//	//int ext = (int)(f_delay) % nearestDivisor;
-					//	nextFrameDelay[i] = nearestDivisor * (mul);// + ext);
-					//	if(nextFrameDelay[i] < 1)
-					//		nextFrameDelay[i] = 1;
-					//}
 
+					
+						//printf("NET_CLOCK[%d]: %09.6f(s)-GlobalTimer[%d]: %09.6f(s)-Diff: %09.6f(s)-GEN_CLOCK[%d]: %09.6f(s) qindex[%d]: %d pts[%d]: %09.6f(s) cDiff[%d]: %09.6f(s) frame_timer: %09.6f-nextFrameDelay[i]: %09.6f\n", \
+							i, g_AudioClock[i], i, currGlobalTimer[i], diff[i] + g_Delay[i], i, newClock, i, pboIdx, i, pboPts, i, cDiff, frame_timer[i], nextFrameDelay[i]);
+
+						//printf("qindex[%d]: %d - pbopts: %09.6f - newClock: %09.6f -cDiff: %09.6f frame_timer: %09.6f ++ diff: %09.6f - nextFrameDelay[i]: %f-----<\n", \
+							i, pboIdx, pboPts, newClock, cDiff, frame_timer[i], diff[i], nextFrameDelay[i]);
+
+						//if(nextFrameDelay[i] > 0) {
+						//  const int nearestDivisor = 1;
+						//	int mul = (int)(nextFrameDelay[i]) / nearestDivisor;
+						//	//int ext = (int)(f_delay) % nearestDivisor;
+						//	nextFrameDelay[i] = nearestDivisor * (mul);// + ext);
+						//	if(nextFrameDelay[i] < 1)
+						//		nextFrameDelay[i] = 1;
+						//}
+#endif
+					}
 					if(enableDebugOutput)
 						fprintf(stdout, "-NEXT_FRAME_DELAY[%d]: %f(ms)\n", i, nextFrameDelay[i]);
-					
-					//if(nextFrameDelay[i] > (ceil(fps[i]))/1000 * 10)
-					//	nextFrameDelay[i] = (ceil(fps[i]))/1000 * 10;
-
+			
+					//printf("<<<newClock: %09.6f\n",newClock);
 					//printf("qindex[%d]: %d - pbopts: %09.6f - newClock: %09.6f ++ diff: %09.6f - nextFrameDelay[i]: %f-----<\n", i, pboIdx, pboPts, newClock, diff[i], nextFrameDelay[i]);
 					if (nextFrameDelay[i] >= 0)// || !pbosEmpty(i))// || size > 0)
 					{
+						static double sendPtsTime = pboPts;
+						if (PTSMaster && pboPts > 0 && pboPts != sendPtsTime) {
+							sendPtsTime = pboPts;
+							char current_time[256];
+							sprintf(current_time, "%f", pboPts);
+							//printf("s %f\n", pboPts);
+							send_udp(udp_ip, udp_port, current_time);
+						}
+
+						if (PTSSlave) {
+							//printf("r %f\n", pboPts);
+						}
+
 						if(enablePBOs)
 						{
 							increamentPBORingBuffer(i);
@@ -2943,7 +2964,7 @@ static void CALLBACK TimerFunction(UINT wTimerID, UINT msg, DWORD dwUser, DWORD 
 					}
 					else if (nextFrameDelay[i] == -1)
 					{
-						//printf("++nextFrameDelay[i] == -1\n");
+						printf("++nextFrameDelay[i] == -1\n");
 						//glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA/*GL_RGB*/, inwidth[i], inheight[i], 0, GL_RGBA/*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
 						//glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, inwidth[i], inheight[i], GL_RGBA/*GL_RGB*/, GL_UNSIGNED_BYTE, rawRGBData[i]);
 

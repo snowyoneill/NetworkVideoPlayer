@@ -63,6 +63,9 @@ double getGlobalVideoTimer(int videounit);
 void syncThread(void* dummy);
 void tcpThread(void* dummy);
 
+void syncThreadCheckMessages(int side);
+void syncThreadCheckMessagesBlk(int side);
+
 #endif
 
 #endif

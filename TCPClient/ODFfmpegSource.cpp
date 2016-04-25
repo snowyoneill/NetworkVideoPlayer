@@ -2374,6 +2374,99 @@ double ODFfmpegSource::synchronize_video(double pts)
   return pts;
 }
 #pragma endregion
+
+#include "pbo.h"
+int side = 0;
+int ODFfmpegSource::queue_picture_pbo(AVFrame *pFrame, double pts)
+{
+	VideoPicture *vp;
+	AVPicture pict;
+
+	updatePBOsRingBufferDecoderCheckSize(side);
+
+	if(state->quit)
+	{
+		printf("---Shutdown frame stream %s.\n", videoFileName_.c_str());
+		//updatePBOsRingBufferDecoder(side, NULL, 0, -50);
+		//state->pictq_size = 0;
+		atVideoEnd_ = true;
+		return -1;
+	}
+	else
+	{
+		// windex is set to 0 initially
+		vp = &state->pictq[state->pictq_windex];
+		//printf("Decoder Index: %d\n", state->pictq_windex);
+
+		/* allocate or resize the buffer! */
+		if(!vp->pictFrame || vp->width != state->codecCtx_->width || vp->height != state->codecCtx_->height)
+		{
+				/* wait until we have a picture allocated */
+				vp->pictFrame = avcodec_alloc_frame();
+				if (vp->pictFrame == NULL)
+					printf("Failed to allocate uncompressed video frame buffer.");
+				int rawFrameNumBytes_ = avpicture_get_size(state->desiredRawFormat_, state->codecCtx_->width, state->codecCtx_->height); //RGB!!!!
+				uint8_t *rawFrameBuf_ = (uint8_t*)av_malloc(rawFrameNumBytes_*sizeof(uint8_t));
+				if (rawFrameBuf_ == NULL)
+					printf("Failed to allocate uncompressed video frame buffer.");
+				avpicture_fill((AVPicture*)(vp->pictFrame), rawFrameBuf_, state->desiredRawFormat_, state->codecCtx_->width, state->codecCtx_->height);
+
+				//av_free(rawFrameBuf_);
+
+				//printf("Allocated uncompressed video frame buffer.\n");
+
+				vp->width = state->codecCtx_->width;
+				vp->height = state->codecCtx_->height;
+		}
+		/* We have a place to put our picture on the queue */
+		/* If we are skipping a frame, do we set this to null 
+		but still return vp->allocated = 1? */
+
+		if(vp->pictFrame)
+		//if(vp->bmp)
+		{
+			/* point pict at the queue */
+			pict.data[0] = vp->pictFrame->data[0];
+			pict.data[1] = vp->pictFrame->data[1];
+			pict.data[2] = vp->pictFrame->data[2];
+
+			pict.linesize[0] = vp->pictFrame->linesize[0];
+			pict.linesize[1] = vp->pictFrame->linesize[1];
+			pict.linesize[2] = vp->pictFrame->linesize[2];
+
+			// Convert the image into YUV format that SDL uses
+			//img_convert(&pict, dst_pix_fmt,
+			//	(AVPicture *)pFrame, is->video_st->codec->pix_fmt, 
+			//	is->video_st->codec->width, is->video_st->codec->height);
+
+
+//printf("/// INIT TIMER ///\n");
+//double sws_scaleStartTime = (av_gettime() /*/ 1000000.0 */ );
+
+
+			//sws_scale(is->decodeCtx_, is->nativeFrame_->data, is->nativeFrame_->linesize, 0, is->nativeHeight_, is->rawFrame_->data, is->rawFrame_->linesize);
+			sws_scale(state->decodeCtx_, ((AVPicture *)pFrame)->data, ((AVPicture *)pFrame)->linesize, 0, (pFrame)->height, 
+				pict.data, pict.linesize);			
+			//sws_scale(state->decodeCtx_, ((AVPicture *)pFrame)->data, ((AVPicture *)pFrame)->linesize, 0, (pFrame)->height, 
+			//	((AVPicture *)pFrame)->data, ((AVPicture *)pFrame)->linesize);
+
+//double sws_scaleTime = ( av_gettime() /*/ 1000000.0*/ );
+//printf("sws_scale Time: %09.6f\n", sws_scaleTime  - sws_scaleStartTime);// - state->frame_timer_start;);
+
+			//SDL_UnlockYUVOverlay(vp->bmp);
+			vp->pts = pts;
+
+			/* now we inform our display thread that we have a pic ready */
+			if(++state->pictq_windex == VIDEO_PICTURE_QUEUE_SIZE)
+				state->pictq_windex = 0;
+
+			updatePBOsRingBufferDecoder(side, pict.data[0], pict.linesize[0], pts);
+		}
+	}
+
+	return 0;
+}
+
 /* Called by advanceFrame() to queue pictures on a ring buffer.
  * If the ring buffer is full then the thread calling advanceFrame() will block waiting for the ring buffer size to drop below VIDEO_PICTURE_QUEUE_SIZE.
  * Else add the next picture to the ring buffer.
@@ -3127,61 +3220,63 @@ bool ODFfmpegSource::decodeVideoFrame()
 			//clearQueuedFrames();
 			//avcodec_flush_buffers(state->codecCtx_);
 
-#ifdef  USE_CRITICAL_SECTION
-	/* Enter the critical section -- other threads are locked out */
-    EnterCriticalSection(&state->pictqMutex);
-#endif
+//#ifdef  USE_CRITICAL_SECTION
+//	/* Enter the critical section -- other threads are locked out */
+//    EnterCriticalSection(&state->pictqMutex);
+//#endif
+//
+//#ifdef USE_MUTEX
+//#ifdef USE_ODBASE
+//	state->pictqMutex.grab();
+//#else
+//	WaitForSingleObject(state->pictqMutex, INFINITE);
+//#endif
+//#endif
+//				while(state->pictq_size != 0 || !state->quit)
+//				//while(/*state->pictq_size != 0 && */!state->quit)
+//				{
+//					//printf("Waiting for video queue to empty - size: %d.\n", state->pictq_size);
+//#ifdef  USE_CRITICAL_SECTION
+//	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+//    LeaveCriticalSection(&state->pictqMutex);
+//#endif
+//
+//#ifdef USE_MUTEX
+//#ifdef USE_ODBASE
+//	state->pictqMutex.release();
+//#else
+//	ReleaseMutex(state->pictqMutex);
+//#endif
+//#endif
+//					Sleep(10);
+//
+//#ifdef  USE_CRITICAL_SECTION
+//	/* Enter the critical section -- other threads are locked out */
+//    EnterCriticalSection(&state->pictqMutex);
+//#endif
+//
+//#ifdef USE_MUTEX
+//#ifdef USE_ODBASE
+//	state->pictqMutex.grab();
+//#else
+//	WaitForSingleObject(state->pictqMutex, INFINITE);
+//#endif
+//#endif	
+//				}
+//#ifdef  USE_CRITICAL_SECTION
+//	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+//    LeaveCriticalSection(&state->pictqMutex);
+//#endif
+//
+//#ifdef USE_MUTEX
+//#ifdef USE_ODBASE
+//	state->pictqMutex.release();
+//#else
+//	ReleaseMutex(state->pictqMutex);
+//#endif
+//#endif
+				updatePBOsRingBufferDecoder(side, NULL, 0, -50);
 
-#ifdef USE_MUTEX
-#ifdef USE_ODBASE
-	state->pictqMutex.grab();
-#else
-	WaitForSingleObject(state->pictqMutex, INFINITE);
-#endif
-#endif
-				while(state->pictq_size != 0 || !state->quit)
-				//while(/*state->pictq_size != 0 && */!state->quit)
-				{
-					//printf("Waiting for video queue to empty - size: %d.\n", state->pictq_size);
-#ifdef  USE_CRITICAL_SECTION
-	/* Leave the critical section -- other threads can now EnterCriticalSection() */
-    LeaveCriticalSection(&state->pictqMutex);
-#endif
-
-#ifdef USE_MUTEX
-#ifdef USE_ODBASE
-	state->pictqMutex.release();
-#else
-	ReleaseMutex(state->pictqMutex);
-#endif
-#endif
-					Sleep(10);
-
-#ifdef  USE_CRITICAL_SECTION
-	/* Enter the critical section -- other threads are locked out */
-    EnterCriticalSection(&state->pictqMutex);
-#endif
-
-#ifdef USE_MUTEX
-#ifdef USE_ODBASE
-	state->pictqMutex.grab();
-#else
-	WaitForSingleObject(state->pictqMutex, INFINITE);
-#endif
-#endif	
-				}
-#ifdef  USE_CRITICAL_SECTION
-	/* Leave the critical section -- other threads can now EnterCriticalSection() */
-    LeaveCriticalSection(&state->pictqMutex);
-#endif
-
-#ifdef USE_MUTEX
-#ifdef USE_ODBASE
-	state->pictqMutex.release();
-#else
-	ReleaseMutex(state->pictqMutex);
-#endif
-#endif
 				state->quit = true;
 				printf("Quitting video--->.\n");
 
@@ -3272,7 +3367,8 @@ bool ODFfmpegSource::decodeVideoFrame()
 		pts = synchronize_video(pts);
 #endif
 		//if(queue_picture(state->rawFrame_, pts) < 0)
-		if(queue_picture(state->nativeFrame_, pts) < 0)
+		//if(queue_picture(state->nativeFrame_, pts) < 0)
+		if(queue_picture_pbo(state->nativeFrame_, pts) < 0)	
 		{
 			printf("\nCould not queue PICTURE\n");
 			state->decoderReachedEnd = true;

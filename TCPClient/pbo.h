@@ -36,3 +36,6 @@ void closePBOs();
 
 void unmapPBOsRingBuffer(int side);
 void wakeUpTimerThread(int side);
+
+int updatePBOsRingBufferDecoderCheckSize(int side);
+int updatePBOsRingBufferDecoder(int side, void* pict, int linesize, double pts);

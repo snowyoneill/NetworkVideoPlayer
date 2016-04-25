@@ -201,6 +201,7 @@ struct ODFfmpegSource
 	void video_packet_queue_flush(PacketQueue *q);
 	double synchronize_video(double pts);
 	int queue_picture(AVFrame *pFrame, double pts);
+	int queue_picture_pbo(AVFrame *pFrame, double pts);
 #ifdef VIDEO_DECODING
 	#ifdef NETWORKED_AUDIO
 		double video_refresh_timer(double netClock, double pauseLength, char *dataBuff);

@@ -92,6 +92,9 @@ float volume			= 1.0f;
 float seekDur			= 0.0f;
 bool testPattern		= false;
 
+bool PTSMaster			= false;
+bool PTSSlave 			= false;
+
 int		currFPS			 = 0;
 int		mouse_x			 = 0, mouse_y = 0;
 int		rmouse_x		 = -1, rmouse_y = -1;
@@ -366,6 +369,10 @@ static void printUsageAndDie(const char* progName, bool die = true)
 	printf("  -MutliTimer:\t Enable multimedia timer callbacks instead of the alternative busy wait sleep to reduce cpu resources. Either 'true' or 'false'.\n");
 	printf("  -PreloadAudio: Preload audio buffers (only works with local audio playback). Either 'true' or 'false'.\n");
 	printf("  -BufferSize:\t Set OpenAL buffer size in bytes (only works with local audio playback).\n");
+
+	printf("  -PTSMaster:\t Set this video player as the PTS broadcast master.\n");
+	printf("  -PTSSlave :\t Set this video player as the PTS slave (recieve incoming PTS markers from server).\n");
+	
 
     printf("\n");
 
@@ -835,6 +842,26 @@ int Init(char* cmdline)
 				broadcastAudio = true;
 			else if(strcmp("false", argv[currArgPos + 1]) == 0)
 				broadcastAudio = false;
+			else
+				printUsageAndDie(argv[0], true);
+			currArgPos += 2;
+		}
+		else if( stricmp(argv[currArgPos], "-PTSMaster") == 0 && !PTSSlave )
+		{
+			if(strcmp("true", argv[currArgPos + 1]) == 0)
+				PTSMaster = true;
+			else if(strcmp("false", argv[currArgPos + 1]) == 0)
+				PTSMaster = false;
+			else
+				printUsageAndDie(argv[0], true);
+			currArgPos += 2;
+		}
+		else if( stricmp(argv[currArgPos], "-PTSSlave") == 0 && !PTSMaster)
+		{
+			if(strcmp("true", argv[currArgPos + 1]) == 0)
+				PTSSlave = true;
+			else if(strcmp("false", argv[currArgPos + 1]) == 0)
+				PTSSlave = false;
 			else
 				printUsageAndDie(argv[0], true);
 			currArgPos += 2;
@@ -2667,13 +2694,13 @@ void shutdownPlayer()
 	vertex_buffer_clear(text_buffer3);
 	vertex_buffer_delete(text_buffer3);
 
-	for (int i=0; i<MAXSTREAMS; i++)
-	{
-		while(stopUploadThread[i]) { 
-			printf("Waiting for pbo upload thread to shutdown...\n");
-			Sleep(100);
-		}
-	}
+	//for (int i=0; i<MAXSTREAMS; i++)
+	//{
+	//	while(stopUploadThread[i]) { 
+	//		printf("Waiting for pbo upload thread to shutdown...\n");
+	//		Sleep(100);
+	//	}
+	//}
 
 	cleanUpPbosAndTextures(-1);
 

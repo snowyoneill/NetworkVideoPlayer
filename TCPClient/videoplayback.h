@@ -3,6 +3,7 @@
 
 //#define LOG
 #include "constants.h"
+#include "udp_sync.h"
 
 #include <string>
 using namespace std;
@@ -15,6 +16,9 @@ extern bool		enablePBOs;
 extern bool		multiTimer;
 extern bool		g_preloadAudio;
 extern int		g_bufferSize;
+
+extern bool		PTSMaster;
+extern bool		PTSSlave;
 
 
 extern double g_AudioClock[MAXSTREAMS];

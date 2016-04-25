@@ -15,8 +15,8 @@
 #endif
 #include <assert.h>
 
-#define MAX_PBOS 5
-int pboMode = 5;
+#define MAX_PBOS 3
+int pboMode = 3;
 
 //#define LOCLESS_QUEUES
 //#undef USE_CRITICAL_SECTION
@@ -84,7 +84,6 @@ int uindex[MAXSTREAMS];
 int	um_size[MAXSTREAMS];
 bool quit[MAXSTREAMS];
 
-//int nextFrameUploaded[MAXSTREAMS];
 int currFrameIdx[MAXSTREAMS];
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////// PBO //////////////////////////////////////////////////////
@@ -558,7 +557,7 @@ void unmapPBOsRingBuffer(int side)
 
 	int totalBuffersToMap = dbSize-umSize;
 	//int totalBuffersToMap = pboMode-umSize;
-	//printf("pboMode: %d - umSize: %d - totalBuffersToMap -  = %d.\n", pboMode, umSize, totalBuffersToMap);
+	//printf("pboMode: %d - dbSize: %d - umSize: %d - totalBuffersToMap -  = %d.\n", pboMode, dbSize, umSize, totalBuffersToMap);
 	for(int k=0; k<totalBuffersToMap; k++)
 	{
     if(pboMode > 0)
@@ -1245,6 +1244,294 @@ int updatePBOsRingBuffer(int side)
 	return 0;
 }
 
+typedef unsigned __int8   uint8_t;
+int updatePBOsRingBufferDecoderCheckSize(int side)
+{
+    int nextIndex = 0;                  // pbo index used for next frame
+
+	double initialTime = getGlobalVideoTimer(side);
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&pboMutex[side]);
+#endif
+
+#ifdef USE_MUTEX
+#ifdef USE_ODBASE
+		pboMutex[side].grab();
+#else
+		WaitForSingleObject(pboMutex[side], INFINITE);
+#endif
+#endif
+
+		int pbSize = pbo_size[side];
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&pboMutex[side]);
+#endif
+
+#ifdef USE_MUTEX
+#ifdef USE_ODBASE
+		pboMutex[side].release();
+#else
+		ReleaseMutex(pboMutex[side]);
+#endif
+#endif
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&drawPboMutex[side]);
+#endif
+
+#ifdef USE_MUTEX
+#ifdef USE_ODBASE
+		drawPboMutex[side].grab();
+#else
+		WaitForSingleObject(drawPboMutex[side], INFINITE);
+#endif
+#endif
+
+		int dbSize = draw_size[side];
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&drawPboMutex[side]);
+#endif
+
+#ifdef USE_MUTEX				
+#ifdef USE_ODBASE
+		drawPboMutex[side].release();
+#else
+		ReleaseMutex(drawPboMutex[side]);
+#endif
+#endif
+
+	//if((dbSize >= pbSize))// < pboMode))
+	//{
+	//	//printf("Draw queue >= pbo queue - drawSize = %d - pboSize = %d.\n", dbSize, pbSize);
+	//	return 1;
+	//}
+
+	double waitTime = getGlobalVideoTimer(side);
+	while(dbSize >= pbSize && !quit[side])
+	{
+		//printf("dbSize: %d >= pbSize: %d - WAIT\n", dbSize, pbSize);
+#ifdef USE_ODBASE
+		pboSemaphore[side].wait();
+#else
+		WaitForSingleObject(pboSemaphore[side],INFINITE);
+#endif
+		//ResetEvent(pboSemaphore);
+		//Sleep(100);
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&pboMutex[side]);
+#endif
+
+#ifdef USE_MUTEX
+#ifdef USE_ODBASE
+		pboMutex[side].grab();
+#else
+		WaitForSingleObject(pboMutex[side], INFINITE);
+#endif
+#endif
+
+		pbSize = pbo_size[side];
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&pboMutex[side]);
+#endif
+
+#ifdef USE_MUTEX
+#ifdef USE_ODBASE
+		pboMutex[side].release();
+#else
+		ReleaseMutex(pboMutex[side]);
+#endif
+#endif
+
+#ifdef  USE_CRITICAL_SECTION
+	/* Enter the critical section -- other threads are locked out */
+    EnterCriticalSection(&drawPboMutex[side]);
+#endif
+
+#ifdef USE_MUTEX
+#ifdef USE_ODBASE
+		drawPboMutex[side].grab();
+#else
+		WaitForSingleObject(drawPboMutex[side], INFINITE);
+#endif
+#endif
+
+		dbSize = draw_size[side];
+						
+#ifdef  USE_CRITICAL_SECTION
+	/* Leave the critical section -- other threads can now EnterCriticalSection() */
+    LeaveCriticalSection(&drawPboMutex[side]);
+#endif
+
+#ifdef USE_MUTEX				
+#ifdef USE_ODBASE
+		drawPboMutex[side].release();
+#else
+		ReleaseMutex(drawPboMutex[side]);
+#endif
+#endif
+	}
+	double endwaitTime = getGlobalVideoTimer(side);
+	//printf("wat mapped buffer(ms): %f\n", (endwaitTime-waitTime));
+
+	return 0;
+}
+
+int updatePBOsRingBufferDecoder(int side, void* pict, int linesize, double pts)
+{
+	int nextIndex = 0;
+	//for(int k=0; k<pbSize-dbSize; k++)
+	{
+    if(pboMode > 0)
+    {
+		// "index" is used to copy pixels from a PBO to a texture object
+        // "nextIndex" is used to update pixels in a PBO
+		if(pboMode == 1)
+        {
+            // In single PBO mode, the index and nextIndex are set to 0
+            nextIndex = 0;
+        }
+        else if(pboMode > 1)
+        {
+			////qindex[side] = (qindex[side] + 1) % pboMode;
+			//nextIndex = (qindex[side] + dbSize) % pboMode;
+
+			nextIndex = (dindex[side] + 1) % pboMode;
+		}
+		//printf("Pbo uploaded - size = %d.\n", pbo_size[side]);
+
+        // measure the time copying data from PBO to texture object
+        //t1.stop();
+        //copyTime = t1.getElapsedTimeInMilliSec();
+        ///////////////////////////////////////////////////
+
+		double startTime = getGlobalVideoTimer(side);
+        // start to modify pixel values ///////////////////
+        //t1.start();
+
+		if(enableDebugOutput)
+		{
+			//assert(data);
+			assert(pboRingBuff[nextIndex]);
+		}
+		//pboRingBuff[qindex[side]] = (char *)data;
+
+		double pbopts = pts;
+		//double pbopts = -1.0;
+		//int ret = getNextVideoFrameNext(side, (char *)pboRingBuff[nextIndex], nextIndex, pbopts);
+		//static char *rawData1 = new char[1920*1080*4];
+		//int ret = getNextVideoFrameNext(side, (char *)rawData1, nextIndex, pbopts);
+
+		//printf("^^^drawSize = %d - pboSize =   %d - nextIndex: %d - pts: %f - pboPTS[nextIndex]: %f - ret: %d\n", dbSize, pbSize, nextIndex, pbopts, pboPTS[nextIndex], ret);
+		//if(ret > 0)
+		if(pts >= 0)
+		{
+			pboPTS[nextIndex] = pbopts;
+			memcpy((unsigned char *) pboRingBuff[nextIndex], pict, sizeof(uint8_t) * linesize * pboheight[side]);
+
+			#ifdef  USE_CRITICAL_SECTION
+				/* Enter the critical section -- other threads are locked out */
+				EnterCriticalSection(&drawPboMutex[side]);
+			#endif
+
+			#ifdef USE_MUTEX
+			#ifdef USE_ODBASE
+					drawPboMutex[side].grab();
+			#else
+					WaitForSingleObject(drawPboMutex[side], INFINITE);
+			#endif
+			#endif
+
+						draw_size[side]++;
+
+						//if(um_size[side] < pboMode)
+						//	um_size[side]++;
+							
+				#ifdef  USE_CRITICAL_SECTION
+					/* Leave the critical section -- other threads can now EnterCriticalSection() */
+					LeaveCriticalSection(&drawPboMutex[side]);
+				#endif
+
+				#ifdef USE_MUTEX				
+				#ifdef USE_ODBASE
+						drawPboMutex[side].release();
+				#else
+						ReleaseMutex(drawPboMutex[side]);
+				#endif
+				#endif
+
+			dindex[side] = (dindex[side] + 1) % pboMode;
+
+			wakeUpTimerThread(side);
+		}
+		//else if(pts == -50)
+		//{
+		//	printf("|||Pbo queue has reached the end.\n");
+		//	//printf("===drawSize = %d - pboSize =   %d - nextIndex: %d - pts: %f - pboPTS[nextIndex]: %f\n", dbSize, pbSize, nextIndex, pbopts, pboPTS[nextIndex]);
+		//	
+		//	pboPTS[nextIndex] = -50;
+
+		//	#ifdef  USE_CRITICAL_SECTION
+		//		/* Enter the critical section -- other threads are locked out */
+		//		EnterCriticalSection(&drawPboMutex[side]);
+		//	#endif
+
+		//	#ifdef USE_MUTEX
+		//	#ifdef USE_ODBASE
+		//			drawPboMutex[side].grab();
+		//	#else
+		//			WaitForSingleObject(drawPboMutex[side], INFINITE);
+		//	#endif
+		//	#endif
+
+		//				draw_size[side]++;
+		//					
+		//		#ifdef  USE_CRITICAL_SECTION
+		//			/* Leave the critical section -- other threads can now EnterCriticalSection() */
+		//			LeaveCriticalSection(&drawPboMutex[side]);
+		//		#endif
+
+		//		#ifdef USE_MUTEX				
+		//		#ifdef USE_ODBASE
+		//				drawPboMutex[side].release();
+		//		#else
+		//				ReleaseMutex(drawPboMutex[side]);
+		//		#endif
+		//		#endif
+
+		//	dindex[side] = (dindex[side] + 1) % pboMode;
+
+		//	wakeUpTimerThread(side);
+
+		//	return -50;
+		//}
+
+        // measure the time modifying the mapped buffer
+        //t1.stop();
+        //updateTime = t1.getElapsedTimeInMilliSec();
+		double endTime = getGlobalVideoTimer(side);
+		//printf("udp mapped buffer(ms): %f\n", (endTime-startTime));
+		//printf("\t\t\t\tUPLOADTime: %f\n", (endTime-startTime));
+        ///////////////////////////////////////////////////
+    }
+	}
+	double endTime = getGlobalVideoTimer(side);
+	//printf("mod mapped buffer(ms): %f\n", (endTime-initialTime));
+
+	return 0;
+}
+
+
 void wakeUpTimerThread(int side)
 {
 	//printf("rel waitSemaphore\n");
@@ -1534,7 +1821,6 @@ int getCurrPbo(int side)
 void clearPBOs(int side)
 {
 	currFrameIdx[side]	  = 0;
-	//nextFrameUploaded[side] = -1;
 
 	for(int i=0; i<MAXSTREAMS; i++)
 	{
@@ -2021,40 +2307,17 @@ void drawPBOsRingBuffer2(int side)
 		{
 			if(currFrameIdx[side] == nextIndex)
 				return;
-			if((currFrameIdx[side] + 1) % pboMode != nextIndex)
-				printf("===qindex[%d]:  %d - currFrameIdx: %d -  pbopts: %f - MISSED FRAME: nextFrameDelay[i]: %09.6f\n",  side, nextIndex, currFrameIdx[side], pboPTS[nextIndex], nextFrameDelay[side]);
+			//if((currFrameIdx[side] + 1) % pboMode != nextIndex)
+			//	printf("===qindex[%d]:  %d - currFrameIdx: %d -  pbopts: %f - MISSED FRAME: nextFrameDelay[i]: %09.6f\n",  side, nextIndex, currFrameIdx[side], pboPTS[nextIndex], nextFrameDelay[side]);
 			currFrameIdx[side] = nextIndex;
 		}
 #endif
-		if(!bufferUnmapped[nextIndex])
-		{
-			//printf("===qindex[%d]:  %d - pbopts: %f - bufferUnmapped: %d\n",  side, nextIndex, pboPTS[nextIndex], bufferUnmapped[nextIndex]);
-			return;
-		}
-		//bufferUnmapped[nextIndex] = false;
-
-		//for(int i=0; i<pboMode; i++)
-		//{
-		//	int idx = bufferUnmapped[nextIndex+i%pboMode];
-		//	bool found = false;
-		//if(!bufferUnmapped[idx])
+		//if(!bufferUnmapped[nextIndex])
 		//{
 		//	printf("===qindex[%d]:  %d - pbopts: %f - bufferUnmapped: %d\n",  side, nextIndex, pboPTS[nextIndex], bufferUnmapped[nextIndex]);
-		//	//return;
-		//}
-		//else
-		//{
-		//	found = true;
-		//}
-		//if(found)
-		//{
-		//	nextIndex = idx;
-		//	currFrameIdx = nextIndex;
-		//}
-		//else
 		//	return;
-		//bufferUnmapped[nextIndex] = false;
 		//}
+		//bufferUnmapped[nextIndex] = false;
 
 #if 0
 #ifdef  USE_CRITICAL_SECTION
@@ -2093,19 +2356,6 @@ void drawPBOsRingBuffer2(int side)
 		//GLboolean res = glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER); // release pointer to mapping buffer
 		//if(GL_FALSE)
 		//	printf("BAD :(\n");
-#if 0
-		if(pboMode > 1)
-		{
-			if(nextFrameUploaded != nextIndex) {
-				glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER); // release pointer to mapping buffer
-				nextFrameUploaded = nextIndex;
-			}
-			else
-				printf("next Frame already Uploaded - nextIndex: %d\n", nextIndex);
-		}
-		//else
-		//	glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER); // release pointer to mapping buffer
-#endif
 
 		static int lwidth[MAXSTREAMS] = {0};
 		static int lheight[MAXSTREAMS] = {0};
@@ -2121,20 +2371,9 @@ void drawPBOsRingBuffer2(int side)
 		lheight[side] = pboheight[side];
 
 		{
+			//skipFrame(side);
 			//doneWithFrame(side);
-#if 0
-		if(pboMode > 1)
-			if(dSize-1 > 0)
-			{
-				int tmpnextIndex = (nextIndex + 1) % pboMode;
-				printf("next Frame uploading        - nextIndex: %d\n", tmpnextIndex);
-				
-				glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pboIds[side][tmpnextIndex]);
-				glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER); // release pointer to mapping buffer
 
-				nextFrameUploaded = tmpnextIndex;
-			}
-#endif
 			//// it is good idea to release PBOs with ID 0 after use.
 			//// Once bound with 0, all pixel operations are back to normal ways.
 			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
